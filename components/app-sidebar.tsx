@@ -42,7 +42,7 @@ import {
 const data = {
   user: {
     name: "user-test",
-    avatar: "/qmanager-logo.png",
+    avatar: "/qmanager-logo.svg",
   },
   navMain: [
     {
@@ -161,12 +161,12 @@ const data = {
   monitoring: [
     {
       title: "Network Analysis",
-      url: "#",
+      url: "/monitoring",
       icon: PieChart,
       items: [
         {
           title: "Latency Monitor",
-          url: "#",
+          url: "/monitoring/latency",
         },
       ],
     },

@@ -1,6 +1,7 @@
 "use client"
 
 import { ChevronRight, type LucideIcon } from "lucide-react"
+import { usePathname } from "next/navigation"
 
 import {
   Collapsible,
@@ -34,16 +35,24 @@ export function NavMonitoring({
     }[]
   }[]
 }) {
+  const pathname = usePathname()
+
   return (
     <SidebarGroup>
       <SidebarGroupLabel>
         Monitoring
       </SidebarGroupLabel>
       <SidebarMenu>
-        {monitoring.map((item) => (
-          <Collapsible key={item.title} asChild defaultOpen={item.isActive}>
+        {monitoring.map((item) => {
+          // Check if current path matches this item or any of its children
+          const isActive = pathname === item.url
+          const isChildActive = item.items?.some((subItem) => pathname === subItem.url) ?? false
+          const isParentOrChildActive = isActive || isChildActive
+
+          return (
+          <Collapsible key={item.title} asChild defaultOpen={isParentOrChildActive}>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild tooltip={item.title} isActive={item.isActive}>
+              <SidebarMenuButton asChild tooltip={item.title} isActive={isParentOrChildActive}>
                 <a href={item.url}>
                   <item.icon />
                   <span>{item.title}</span>
@@ -59,22 +68,24 @@ export function NavMonitoring({
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     <SidebarMenuSub>
-                      {item.items?.map((subItem) => (
+                      {item.items?.map((subItem) => {
+                        const isSubItemActive = pathname === subItem.url
+                        return (
                         <SidebarMenuSubItem key={subItem.title}>
-                          <SidebarMenuSubButton asChild>
+                          <SidebarMenuSubButton asChild isActive={isSubItemActive}>
                             <a href={subItem.url}>
                               <span>{subItem.title}</span>
                             </a>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
-                      ))}
+                      )})}
                     </SidebarMenuSub>
                   </CollapsibleContent>
                 </>
               ) : null}
             </SidebarMenuItem>
           </Collapsible>
-        ))}
+        )})}
       </SidebarMenu>
     </SidebarGroup>
   )

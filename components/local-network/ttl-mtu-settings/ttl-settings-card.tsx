@@ -10,13 +10,6 @@ import {
 
 import { Field, FieldGroup, FieldLabel, FieldSet } from "@/components/ui/field";
 
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
-
-import { TbInfoCircleFilled } from "react-icons/tb";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 

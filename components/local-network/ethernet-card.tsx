@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useRef } from "react";
+import Image from "next/image";
+import deviceIcon from "@/public/device-icon.svg";
 
 import {
   Card,
@@ -50,10 +52,11 @@ const EthernetStatusCard = () => {
               ref={deviceRef}
               className="size-32 bg-primary/15 rounded-full p-6 flex items-center justify-center"
             >
-              <img
-                src="/device-icon.svg"
+              <Image
+                src={deviceIcon}
                 alt="Device Icon"
                 className="size-full rounded-full drop-shadow-md"
+                priority
               />
             </div>
 
