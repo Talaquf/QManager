@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 15, 2026 (TA debugging session)
+**Last Updated:** February 15, 2026 (Connectivity architecture)
 
 ---
 
@@ -16,6 +16,8 @@
 6. [Deployment Notes](#6-deployment-notes)
 7. [Platform Quirks & Lessons Learned](#7-platform-quirks--lessons-learned)
 8. [Remaining Work](#8-remaining-work)
+9. [TA Debugging Notes (Resolved)](#9-ta-debugging-notes-resolved-)
+10. [Connectivity Architecture Reference](#10-connectivity-architecture-reference)
 
 ---
 
@@ -27,15 +29,23 @@
 │  useModemStatus │ GET │   .sh (CGI)  │ cat │ (/tmp/ RAM disk) │write│  Daemon   │
 └─────────────────┘     └──────────────┘     └──────────────────┘     └─────┬─────┘
                                                                             │
-                                                                      ┌─────▼─────┐
-                                                                      │   qcmd    │
-                                                                      │ (flock)   │
-                                                                      └─────┬─────┘
-                                                                            │
-                                                                      ┌─────▼─────┐
-                                                                      │ sms_tool  │
-                                                                      │ (serial)  │
-                                                                      └───────────┘
+                                                    reads ┌─────────────────┤
+                                                    ┌─────▼──────┐    ┌─────▼─────┐
+                                                    │ ping.json  │    │   qcmd    │
+                                                    │ (from ping │    │ (flock)   │
+                                                    │  daemon)   │    └─────┬─────┘
+                                                    └─────▲──────┘          │
+                                                          │           ┌─────▼─────┐
+                                              ┌───────────┴──┐        │ sms_tool  │
+                                              │ qmanager_    │        │ (serial)  │
+                                              │ ping         │        └───────────┘
+                                              └──────────────┘
+                                                    ▲
+                                                    │ reads
+                                              ┌─────┴────────┐
+                                              │ qmanager_    │───▶ qcmd (Tier 2)
+                                              │ watchcat     │
+                                              └──────────────┘
 ```
 
 ### Core Principles
@@ -46,13 +56,14 @@
 - **Flash Protection:** All volatile writes go to `/tmp/` (tmpfs/RAM). No flash wear.
 - **Atomic Writes:** The poller writes to `status.json.tmp`, then uses `mv` (atomic rename) to replace `status.json`. The frontend never reads a half-written file.
 
-### Three Competing Actors
+### Four Competing Actors
 
 | Actor | Purpose | Access Pattern |
 |-------|---------|----------------|
 | Dashboard Poller | Continuous signal/status updates | Every 2–30s, multiple AT commands |
 | User Terminal | Manual AT commands from web UI | Random, on-demand |
-| Watchdog | Connectivity health checks | Periodic, infrequent |
+| Watchcat | Recovery actions (Tier 2: AT+CFUN) | Rare, only during connectivity failure recovery |
+| Ping Daemon | Internet reachability & latency | **Never touches modem** — uses ICMP ping only |
 
 ---
 
@@ -65,6 +76,8 @@
 | `scripts/usr/bin/qcmd` | `/usr/bin/qcmd` | **Gatekeeper** — flock-based mutex, stale lock recovery, command classification (short/long), timeout wrapping |
 | `scripts/usr/bin/qmanager_poller` | `/usr/bin/qmanager_poller` | **Poller Daemon** — Tier 1/2/Boot polling, AT command parsing, JSON cache writer |
 | `scripts/etc/init.d/qmanager` | `/etc/init.d/qmanager` | **procd init script** — manages poller lifecycle with auto-respawn |
+| `scripts/usr/bin/qmanager_ping` | `/usr/bin/qmanager_ping` | **Ping Daemon** — unified ICMP ping loop, writes `/tmp/qmanager_ping.json` (RTT, reachable, streaks, history) |
+| `scripts/usr/bin/qmanager_watchcat` | `/usr/bin/qmanager_watchcat` | **Watchcat** — reads ping data, state machine (MONITOR→SUSPECT→RECOVERY→COOLDOWN→LOCKED), tiered escalation |
 | `scripts/usr/lib/qmanager/qlog.sh` | `/usr/lib/qmanager/qlog.sh` | **Logging Library** — sourceable centralized logging with levels, rotation, dual output (file + syslog) |
 | `scripts/usr/bin/qmanager_logread` | `/usr/bin/qmanager_logread` | **Log Viewer** — CLI utility for filtering, tailing, and inspecting QManager logs |
 | `scripts/cgi/quecmanager/at_cmd/fetch_data.sh` | `/www/cgi-bin/quecmanager/at_cmd/fetch_data.sh` | **Dashboard CGI** — serves cached JSON, zero modem contact |
@@ -89,6 +102,8 @@ All backend scripts use the centralized logging library (`/usr/lib/qmanager/qlog
 |-----------|-----|---------------|
 | Gatekeeper | `qcmd` | Lock acquire/release/timeout/stale recovery, AT command execution, timeouts |
 | Poller | `poller` | Boot data collection, state transitions, modem reachability changes, poll failures |
+| Ping Daemon | `ping` | Target reachability changes, streak events, daemon start/stop |
+| Watchcat | `watchcat` | State transitions, recovery actions, escalation tier changes, bootloop guard triggers |
 | Dashboard CGI | `cgi_fetch` | Cache file missing (fallback) |
 | Terminal CGI | `cgi_terminal` | Commands received, blocked long commands |
 
@@ -370,6 +385,31 @@ Full schema for `/tmp/qmanager_status.json`. TypeScript interfaces are in `types
     "tx_bytes_per_sec": 0,
     "total_rx_bytes": 0,
     "total_tx_bytes": 0
+  },
+  "connectivity": {
+    "internet_available": true,
+    "status": "connected | degraded | disconnected | recovery | unknown",
+    "latency_ms": 34.2,
+    "avg_latency_ms": 37.1,
+    "min_latency_ms": 28.5,
+    "max_latency_ms": 52.3,
+    "jitter_ms": 4.8,
+    "packet_loss_pct": 0,
+    "ping_target": "8.8.8.8",
+    "latency_history": [34.2, 35.1, null, 33.8],
+    "history_interval_sec": 2,
+    "history_size": 60,
+    "during_recovery": false
+  },
+  "watchcat": {
+    "state": "monitor | suspect | recovery | cooldown | locked | disabled",
+    "enabled": true,
+    "failure_count": 0,
+    "current_tier": 1,
+    "last_recovery_action": null,
+    "last_recovery_time": null,
+    "reboots_this_hour": 0,
+    "cooldown_remaining_sec": 0
   }
 }
 ```
@@ -410,7 +450,7 @@ The poller maps the AT+QENG `state` field to `service_status` as follows:
 | **5G Primary Status** | `nr-status.tsx` | ✅ **DONE** | `data.nr` — band, ARFCN, PCI, RSRP, RSRQ, SINR, SCS |
 | **Device Information** | `device-status.tsx` | ✅ **DONE** | `data.device` — firmware, build date, manufacturer, IMEI, IMSI, ICCID, phone, LTE category, MIMO |
 | **Device Metrics** | `device-metrics.tsx` | ✅ **DONE** | `data.device` (temp, CPU, memory, uptime) + `data.traffic` (live traffic, data usage) |
-| **Live Latency** | `live-latency.tsx` | ❌ Hardcoded | Separate implementation (not from poller cache) |
+| **Live Latency** | `live-latency.tsx` | ❌ Pending | `data.connectivity` — latency_ms, latency_history, jitter, packet_loss (from unified ping daemon via poller merge) |
 | **Recent Activities** | `recent-activities.tsx` | ❌ Hardcoded | Separate implementation (event log) |
 | **Signal History** | `signal-history.tsx` | ❌ Mock data | `data.lte.rsrp/sinr` + `data.nr.rsrp/sinr` (accumulated client-side) |
 
@@ -614,14 +654,23 @@ This allows callers to distinguish lock contention from modem failures.
 7. **Cellular Information Page** — Detailed CA info, neighbor cells, band configuration.
 8. **Band Locking / APN Management** — Write-path CGI endpoints (currently only read-path exists).
 
-### Backend Improvements
+### Connectivity & Watchcat (See: `documentations/CONNECTIVITY_ARCHITECTURE.md`)
 
-9. **Internet connectivity detection** — Separate mechanism to determine actual internet reachability (ping-based or DNS check), distinct from radio/modem status.
-10. **Watchdog** — Connectivity health checks (periodic ping), modem restart on extended failure.
-11. **Error recovery testing** — SIM ejection, modem unresponsive, `sms_tool` crash, stale lock scenarios.
-12. **Long command support** — Verify `AT+QSCAN` flag-based coordination between poller and Cell Scanner page.
-13. **NR MIMO layers** — Currently only LTE MIMO is fetched. May need a separate command for NR MIMO (investigate `AT+QNWCFG="nr_mimo_layers"` or similar).
-14. **TA-based cell distance** — ✅ Done. Root cause: `parse_time_advance()` used `rev` (not available on BusyBox) to extract the last CSV field. Replaced with `awk -F',' '{print $NF}'`. Also removed `else` branches that were resetting the other technology's TA when calling with single-technology data.
+9. **Build `qmanager_ping`** — Unified ping daemon. Single/dual-target ICMP, atomic JSON writes, RTT + reachable + streak counts + history ring buffer. BusyBox compatible.
+10. **Integrate ping data into poller** — Poller reads `/tmp/qmanager_ping.json`, merges `connectivity` section into `qmanager_status.json`.
+11. **Wire Internet badge** — Replace `hasInternet = isServiceActive` with `data?.connectivity?.internet_available` in `network-status.tsx`.
+12. **Build Live Latency component** — Renders `connectivity.latency_ms` (big number), `connectivity.latency_history` (sparkline), secondary stats.
+13. **Build `qmanager_watchcat`** — State machine daemon. MONITOR→SUSPECT→RECOVERY→COOLDOWN→LOCKED. Reads ping data, executes tiered recovery (ifup → AT+CFUN → reboot). Token-bucket bootloop protection.
+14. **Wire watchcat state to UI** — Optional status indicator showing watchcat state, failure count, last recovery action.
+15. **Rename watchcat lock** — `/tmp/qmanager.lock` (from old Watchcat Architecture Guide) → `/tmp/qmanager_watchcat.lock` to prevent collision with serial port lock at `/var/lock/qmanager.lock`.
+16. **Update init script** — Extend `/etc/init.d/qmanager` with three procd instances (ping, poller, watchcat).
+
+### Other Backend Improvements
+
+17. **Error recovery testing** — SIM ejection, modem unresponsive, `sms_tool` crash, stale lock scenarios.
+18. **Long command support** — Verify `AT+QSCAN` flag-based coordination between poller and Cell Scanner page.
+19. **NR MIMO layers** — Currently only LTE MIMO is fetched. May need a separate command for NR MIMO (investigate `AT+QNWCFG="nr_mimo_layers"` or similar).
+20. **TA-based cell distance** — ✅ Done. Root cause: `parse_time_advance()` used `rev` (not available on BusyBox) to extract the last CSV field. Replaced with `awk -F',' '{print $NF}'`. Also removed `else` branches that were resetting the other technology's TA when calling with single-technology data.
 
 ---
 
@@ -668,6 +717,42 @@ Always verify command availability on BusyBox before using in shell scripts. Com
 | `types/modem-status.ts` | Added `ta: number \| null` to `LteStatus` and `NrStatus`, `calculateLteDistance()`, `calculateNrDistance()`, `formatDistance()` |
 | `components/dashboard/device-metrics.tsx` | Added "LTE Cell Distance" and "NR Cell Distance" rows, accepts `lteData`/`nrData` props |
 | `components/dashboard/home-component.tsx` | Passes `lteData={data?.lte}` and `nrData={data?.nr}` to DeviceMetricsComponent |
+
+---
+
+## 10. Connectivity Architecture Reference
+
+The full architecture for internet status, live latency, and watchcat integration is documented in:
+
+**`documentations/CONNECTIVITY_ARCHITECTURE.md`**
+
+Key design decisions summarized here for quick reference:
+
+- **Unified Ping Daemon (`qmanager_ping`)** — Single daemon pings, everyone else reads. No consumer pings on its own. Writes `/tmp/qmanager_ping.json`.
+- **Watchcat reads, doesn't ping** — Pure state machine. Reads ping data, makes decisions, executes recovery via `qcmd` (Tier 2 only). Writes `/tmp/qmanager_watchcat.json`.
+- **Merge at the poller** — Poller reads both ping and watchcat JSON files, merges `connectivity` and `watchcat` sections into main `status.json`. Frontend fetches one file.
+- **Lock file disambiguation** — Serial port: `/var/lock/qmanager.lock` (flock). Watchcat maintenance: `/tmp/qmanager_watchcat.lock` (presence flag). Recovery active: `/tmp/qmanager_recovery_active` (presence flag). Long scan: `/tmp/qmanager_long_running` (presence flag).
+- **Independent failure domains** — Ping daemon crash doesn't affect modem data. Poller crash doesn't affect ping data. Watchcat crash doesn't affect dashboard. procd respawns each independently.
+
+### RAM Files Registry
+
+| File | Writer | Readers | Purpose |
+|------|--------|---------|--------|
+| `/tmp/qmanager_status.json` | Poller | Frontend (via CGI) | Main dashboard data (modem + connectivity + watchcat merged) |
+| `/tmp/qmanager_ping.json` | Ping daemon | Poller, Watchcat | Raw ping results (RTT, reachable, streaks, history) |
+| `/tmp/qmanager_watchcat.json` | Watchcat | Poller | Watchcat state (current state, failure count, tier, cooldown) |
+| `/tmp/qmanager_ping_history` | Ping daemon | Ping daemon (self) | Flat-file ring buffer of RTT values (one per line) |
+| `/tmp/qmanager.log` | All daemons | `qmanager_logread` | Centralized log file |
+
+### Flag Files Registry
+
+| File | Setter | Checkers | Meaning |
+|------|--------|----------|---------|
+| `/var/lock/qmanager.lock` | `qcmd` (flock) | `qcmd` (flock) | Serial port mutex |
+| `/var/lock/qmanager.pid` | `qcmd` | `qcmd` | Stale lock detection PID |
+| `/tmp/qmanager_long_running` | `qcmd` | Poller, Watchcat | Long AT command active (QSCAN) |
+| `/tmp/qmanager_watchcat.lock` | NetModing scripts | Watchcat | Maintenance mode (band switching) |
+| `/tmp/qmanager_recovery_active` | Watchcat | Ping daemon, Poller | Recovery action in progress |
 
 ---
 
