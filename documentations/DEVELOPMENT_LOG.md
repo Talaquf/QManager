@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 15, 2026 (Phase 4b: Event Severity — Positive/Negative Categorization)
+**Last Updated:** February 16, 2026 (Phase 4c: NSA SCS Parsing Fix + NR TA Command Correction)
 
 ---
 
@@ -248,18 +248,21 @@ Semicolon-chained command — works as a single `sms_tool` call (one lock acquis
 ```
 **Parsing:** Count `"SCC"` lines containing `LTE BAND` for LTE CA. Count `"SCC"` lines containing `NR` for NR CA. Both counts tracked separately.
 
-#### `AT+QNWCFG="lte_time_advance"` / `"nr_time_advance"`
+#### `AT+QNWCFG="lte_time_advance"` / `"nr5g_time_advance"`
 
-**Architecture:** TA reporting is enabled once at boot via `AT+QNWCFG="lte_time_advance",1` and `AT+QNWCFG="nr_time_advance",1` (in `collect_boot_data()`). Tier 2 polling uses query-only commands:
+**Architecture:** TA reporting is enabled once at boot via `AT+QNWCFG="lte_time_advance",1` and `AT+QNWCFG="nr5g_time_advance",1` (in `collect_boot_data()`). Tier 2 polling uses query-only commands:
 - `AT+QNWCFG="lte_time_advance"` — returns current LTE TA value
-- `AT+QNWCFG="nr_time_advance"` — returns current NR TA value (ERROR when no 5G active)
+- `AT+QNWCFG="nr5g_time_advance"` — returns current NR TA value (ERROR when no 5G active)
+
+**⚠ Note:** The NR command is `nr5g_time_advance`, NOT `nr_time_advance`. This differs from the LTE naming convention.
 
 Both are separate AT calls (not chained) so an NR ERROR doesn't kill the LTE result.
 
 ```
-+QNWCFG: "lte_time_advance",1,42    ← 3 fields: feature_name, enabled, TA_value
++QNWCFG: "lte_time_advance",1,42       ← 3 fields: feature_name, enabled, TA_value
++QNWCFG: "nr5g_time_advance",1,4608,0  ← 4 fields: feature_name, enabled, NTA_value, extra
 ```
-**Parsing:** Select lines with 3+ comma-separated fields (`awk -F',' 'NF>=3'`). Extract the last field as the TA value. Strip `\r` carriage returns (sms_tool artifact).
+**Parsing:** Select lines with 3+ comma-separated fields (`awk -F',' 'NF>=3'`). Extract field 3 (`awk '{print $3}'`) as the TA value — NOT `$NF` (last field), because the NR response has a trailing 4th field. Strip `\r` carriage returns (sms_tool artifact).
 
 **Distance calculation (done on frontend):**
 - **LTE:** TA index (0–1282). Distance = (c × 16 × TA × Ts) / 2 where Ts = 1/30720000 (3GPP TS 36.213)
@@ -663,6 +666,14 @@ Parsers that grep for patterns like `"servingcell"` would match the echo line `A
 
 **Solution:** Removed seconds from the display entirely. `formatUptime()` now shows `0m` for sub-minute, `Xh Ym` otherwise. Minutes is the smallest unit. This eliminated 6 `useState` calls, 1 `useEffect` with `setInterval`, and the render-time sync logic from `device-metrics.tsx`. Uptime values now update naturally every 2 seconds with the poll cycle.
 
+### Carriage Returns on Last CSV Fields
+
+**Problem:** When parsing comma-separated AT command responses with `cut -d',' -fN`, the **last field** retains a trailing `\r` carriage return from `sms_tool` output. Middle fields are unaffected because the `,` delimiter cleanly separates them. This caused `map_scs_to_khz()` to receive `"1\r"` instead of `"1"`, failing the `case` match and returning empty (→ `null` in JSON).
+
+**Solution:** Always include `tr -d '\r'` in the CSV strip pipeline, especially when extracting the last field. This was already done in some parsers but was missing from the NSA NR line in `parse_serving_cell()`. The SA mode parser was unaffected because SCS is not the last field in SA responses.
+
+**General Rule:** Any `cut`/`awk` extraction of the last field from an AT command response needs `\r` stripping. Prefer stripping early in the pipeline (on the whole CSV line) rather than on individual field extractions.
+
 ### Exit Code Convention in qcmd
 
 | Exit Code | Meaning |
@@ -712,7 +723,8 @@ This allows callers to distinguish lock contention from modem failures.
 18. **Error recovery testing** — SIM ejection, modem unresponsive, `sms_tool` crash, stale lock scenarios.
 19. **Long command support** — Verify `AT+QSCAN` flag-based coordination between poller and Cell Scanner page.
 20. **NR MIMO layers** — ✅ Done. MIMO moved from boot-only to Tier 2 polling. Now queries both `AT+QNWCFG="lte_mimo_layers"` and `AT+QNWCFG="nr_mimo_layers"` every 15 cycles. Parser combines into `"LTE 1x4 | NR 2x4"` format. NR MIMO gracefully returns empty when no 5G is active.
-21. **TA-based cell distance** — ✅ Done. Root cause: `parse_time_advance()` used `rev` (not available on BusyBox) to extract the last CSV field. Replaced with `awk -F',' '{print $NF}'`. Also removed `else` branches that were resetting the other technology's TA when calling with single-technology data.
+21. **TA-based cell distance** — ✅ Done. Phase 1 (LTE): `parse_time_advance()` used `rev` (not available on BusyBox). Replaced with `awk -F',' '{print $NF}'`. Phase 2 (NR): wrong AT command name (`nr_time_advance` → `nr5g_time_advance`), wrong grep pattern, wrong field extraction (`$NF` → `$3` due to trailing 4th field in NR response). See Section 9.
+22. **NSA SCS parsing** — ✅ Done. `scs` field was `null` in NSA mode because `\r` carriage return on the last CSV field (`cut -d',' -f11` returned `1\r`) caused `map_scs_to_khz()` case match to fail. Fix: added `tr -d '\r'` to the NSA NR CSV strip pipeline in `parse_serving_cell()`.
 
 ---
 
@@ -720,16 +732,13 @@ This allows callers to distinguish lock contention from modem failures.
 
 Timing Advance (TA) cell distance calculation. Backend polls TA values from the modem, frontend computes distance using 3GPP formulas and displays as "3.28 km (TA 42)".
 
-### Root Cause
+### Phase 1: LTE TA (Resolved Feb 14)
 
-`parse_time_advance()` used `rev | cut -d',' -f1 | rev` to extract the last CSV field. `rev` is not available on BusyBox/OpenWRT. The command failed silently, producing an empty string that was rejected by the numeric validator → `lte_ta=""` → `null` in JSON.
+**Root Cause:** `parse_time_advance()` used `rev | cut -d',' -f1 | rev` to extract the last CSV field. `rev` is not available on BusyBox/OpenWRT. The command failed silently, producing an empty string that was rejected by the numeric validator → `lte_ta=""` → `null` in JSON.
 
-### Fix
+**Fix:** Replaced `rev | cut -d',' -f1 | rev` with `awk -F',' '{print $NF}'` (BusyBox-native). Also removed `else` branches that unnecessarily reset the other technology's TA value when parsing single-technology responses.
 
-Replaced `rev | cut -d',' -f1 | rev` with `awk -F',' '{print $NF}'` (BusyBox-native). Also removed `else` branches that unnecessarily reset the other technology's TA value when parsing single-technology responses.
-
-### Debugging History
-
+**Debugging History:**
 1. 4-command chained AT call — NR ERROR killed the whole chain (exit code 2), preventing LTE TA parse.
 2. Split into separate LTE/NR calls — LTE succeeded but TA still null.
 3. Carriage return hypothesis — added `tr -d '\r'`, didn't fix it.
@@ -737,25 +746,46 @@ Replaced `rev | cut -d',' -f1 | rev` with `awk -F',' '{print $NF}'` (BusyBox-nat
 5. Refactored to enable-at-boot + query-only — cleaner response, still null.
 6. Traced pipeline on modem — revealed `rev: not found`. Replaced with `awk`. **Fixed.**
 
+### Phase 2: NR TA (Resolved Feb 16)
+
+Once the modem acquired a 5G-NSA connection, NR TA was confirmed working from manual `qcmd` execution (`+QNWCFG: "nr5g_time_advance",1,4608,0`) but still showed `null` in the JSON cache.
+
+**Root Cause (3 bugs):**
+1. **Wrong AT command name** — poller sent `AT+QNWCFG="nr_time_advance"` but the modem expects `"nr5g_time_advance"`. The NR command uses a different naming convention than LTE (`nr5g_` prefix vs plain `nr_`). Both the boot-time enable and Tier 2 query used the wrong name.
+2. **Wrong grep pattern** — `parse_time_advance()` searched for `"nr_time_advance"` which never matched the actual `"nr5g_time_advance"` in the response.
+3. **Wrong field extraction** — NR response has 4 fields (`"nr5g_time_advance",1,4608,0`) but parser used `awk '{print $NF}'` which grabbed `0` (trailing extra field) instead of `4608` (field 3).
+
+**Fix:**
+- Renamed command to `"nr5g_time_advance"` in poller (boot enable + Tier 2 query)
+- Updated grep pattern in parser to match `"nr5g_time_advance"`
+- Changed field extraction from `{print $NF}` to `{print $3}` for both LTE and NR (safe for LTE: field 3 is also the TA value in its 3-field response)
+
 ### Verified
 
 ```
+# After Phase 1 (LTE only, no 5G active):
 root@RM551E-GL:~# cat /tmp/qmanager_status.json | grep '"ta"'
     "ta": 43
     "ta": null
+
+# After Phase 2 (LTE + NR on 5G-NSA):
+root@RM551E-GL:~# cat /tmp/qmanager_status.json | grep '"ta"'
+    "ta": 43
+    "ta": 4608
 ```
 
-LTE TA=43 correctly parsed. NR TA=null as expected (no active 5G).
+### Lessons Learned
 
-### Lesson Learned
-
-Always verify command availability on BusyBox before using in shell scripts. Common missing commands: `rev`, `seq`, `tac`, `readarray`. Safe alternatives: `awk`, `sed`, `cut`, `tr`.
+1. Always verify command availability on BusyBox before using in shell scripts. Common missing commands: `rev`, `seq`, `tac`, `readarray`. Safe alternatives: `awk`, `sed`, `cut`, `tr`.
+2. Don't assume symmetric naming conventions across AT commands. Always verify the exact command string against actual modem output (`qcmd 'AT+QNWCFG="nr5g_time_advance"'`).
+3. When extracting CSV fields, prefer explicit positions (`{print $3}`) over `{print $NF}` (last field) — response formats can have trailing fields you don't expect.
 
 ### Files Modified
 
 | File | Changes |
 |------|--------|
-| `scripts/usr/bin/qmanager_poller` | Added `lte_ta`/`nr_ta` state vars, `parse_time_advance()` function, boot-time TA enable, Tier 2 query-only polling, JSON output fields |
+| `scripts/usr/bin/qmanager_poller` | Added `lte_ta`/`nr_ta` state vars, boot-time TA enable, Tier 2 query-only polling, JSON output fields. Phase 2: corrected NR command name from `nr_time_advance` to `nr5g_time_advance` (boot enable + Tier 2 query). |
+| `scripts/usr/lib/qmanager/parse_at.sh` | `parse_time_advance()`: Phase 1 replaced `rev` with `awk`. Phase 2 corrected NR grep pattern to `nr5g_time_advance`, changed field extraction from `{print $NF}` to `{print $3}`. |
 | `types/modem-status.ts` | Added `ta: number \| null` to `LteStatus` and `NrStatus`, `calculateLteDistance()`, `calculateNrDistance()`, `formatDistance()` |
 | `components/dashboard/device-metrics.tsx` | Added "LTE Cell Distance" and "NR Cell Distance" rows, accepts `lteData`/`nrData` props |
 | `components/dashboard/home-component.tsx` | Passes `lteData={data?.lte}` and `nrData={data?.nr}` to DeviceMetricsComponent |
