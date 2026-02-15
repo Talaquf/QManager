@@ -307,6 +307,35 @@ export function formatJitter(jitterMs: number | null): string {
   return `${jitterMs.toFixed(1)}ms`;
 }
 
+// --- Network Events (Recent Activities) --------------------------------------
+
+/** Event types emitted by the poller's change detection */
+export type NetworkEventType =
+  | "network_mode"      // Network mode changed (LTE → 5G-NSA, etc.)
+  | "band_change"       // LTE or NR band changed
+  | "pci_change"        // Cell handoff (PCI changed)
+  | "ca_change"         // Carrier Aggregation activated/deactivated/count changed
+  | "nr_anchor"         // 5G NR anchor gained or lost
+  | "signal_lost"       // Modem became unreachable
+  | "signal_restored"   // Modem signal restored
+  | "internet_lost"     // Internet connectivity lost
+  | "internet_restored"; // Internet connectivity restored
+
+/** Severity level for UI icon coloring */
+export type EventSeverity = "info" | "warning" | "error";
+
+/** A single network event from the poller's NDJSON events file */
+export interface NetworkEvent {
+  /** Unix epoch (seconds) when the event was detected */
+  timestamp: number;
+  /** Event classification */
+  type: NetworkEventType;
+  /** Human-readable description of the event */
+  message: string;
+  /** Severity for UI indicator (info = green, warning = amber) */
+  severity: EventSeverity;
+}
+
 // --- Formatting Utilities ----------------------------------------------------
 
 /**
@@ -381,6 +410,21 @@ export function formatDistance(km: number | null): string {
   if (km < 0.01) return "< 10 m";
   if (km < 1) return `${Math.round(km * 1000)} m`;
   return `${km.toFixed(2)} km`;
+}
+
+/**
+ * Formats a Unix timestamp into a relative time string.
+ * e.g., (now - 120) → "2m ago", (now - 3700) → "1h ago"
+ */
+export function formatTimeAgo(timestamp: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - timestamp;
+
+  if (diff < 0) return "just now";
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 /**

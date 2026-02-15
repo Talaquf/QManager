@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 15, 2026 (Phase 3: Live Latency component)
+**Last Updated:** February 15, 2026 (Phase 4b: Event Severity — Positive/Negative Categorization)
 
 ---
 
@@ -82,6 +82,7 @@
 | `scripts/usr/bin/qmanager_logread` | `/usr/bin/qmanager_logread` | **Log Viewer** — CLI utility for filtering, tailing, and inspecting QManager logs |
 | `scripts/cgi/quecmanager/at_cmd/fetch_data.sh` | `/www/cgi-bin/quecmanager/at_cmd/fetch_data.sh` | **Dashboard CGI** — serves cached JSON, zero modem contact |
 | `scripts/cgi/quecmanager/at_cmd/send_command.sh` | `/www/cgi-bin/quecmanager/at_cmd/send_command.sh` | **Terminal CGI** — POST endpoint for manual AT commands via qcmd |
+| `scripts/cgi/quecmanager/at_cmd/fetch_events.sh` | `/www/cgi-bin/quecmanager/at_cmd/fetch_events.sh` | **Events CGI** — serves `/tmp/qmanager_events.json` (NDJSON→JSON array conversion) for Recent Activities |
 
 **Note on file extensions:** Directly-executed scripts in `/usr/bin/` have **no** `.sh` extension (`qcmd`, `qmanager_poller`, `qmanager_logread`). The logging library keeps `.sh` because it's sourced (`. /usr/lib/qmanager/qlog.sh`), not executed directly. CGI scripts keep `.sh` because the extension is part of their URL path.
 
@@ -138,6 +139,7 @@ echo "DEBUG" > /etc/qmanager/log_level
 |---|---|
 | `types/modem-status.ts` | JSON data contract as TypeScript interfaces + utility functions (signal quality, formatting) |
 | `hooks/use-modem-status.ts` | Polling hook — fetches `/cgi-bin/quecmanager/at_cmd/fetch_data.sh` every 2s, provides `data`, `isLoading`, `isStale`, `error`, `refresh()` |
+| `hooks/use-recent-activities.ts` | Events hook — fetches `/cgi-bin/quecmanager/at_cmd/fetch_events.sh` every 10s, provides `events` (newest first), `isLoading`, `error` |
 | `components/dashboard/home-component.tsx` | **Wired** — `"use client"`, calls `useModemStatus()`, passes data + `modemReachable` down to child components |
 | `components/dashboard/network-status.tsx` | **Wired** — Accepts `data`, `modemReachable`, `isLoading`, `isStale` props, renders dynamic network status |
 
@@ -452,7 +454,7 @@ The poller maps the AT+QENG `state` field to `service_status` as follows:
 | **Device Metrics** | `device-metrics.tsx` | ✅ **DONE** | `data.device` (temp, CPU, memory, uptime) + `data.traffic` (live traffic, data usage). Uptimes read directly from poll data (no client-side 1s tick — minutes are the smallest displayed unit). |
 | **Internet Badge** | `network-status.tsx` | ✅ **DONE** | `data.connectivity.internet_available` — three-state badge (green/red/gray for true/false/null). Replaced placeholder `hasInternet = isServiceActive`. |
 | **Live Latency** | `live-latency.tsx` | ✅ **DONE** | `data.connectivity` — Line chart of last 5 RTT values, stats row (current/avg/jitter/loss), Online/Offline badge, loading skeleton, "ping daemon not running" fallback |
-| **Recent Activities** | `recent-activities.tsx` | ❌ Hardcoded | Separate implementation (event log) |
+| **Recent Activities** | `recent-activities.tsx` | ✅ **DONE** | Self-contained: `useRecentActivities()` hook polls `/cgi-bin/.../fetch_events.sh` every 10s. Poller detects state changes and writes NDJSON to `/tmp/qmanager_events.json`. Displays max 5 most recent events. |
 | **Signal History** | `signal-history.tsx` | ❌ Mock data | `data.lte.rsrp/sinr` + `data.nr.rsrp/sinr` (accumulated client-side) |
 
 ### Network Status Component Details
@@ -475,6 +477,36 @@ The poller maps the AT+QENG `state` field to `service_status` as follows:
 | `LTE` + CA active | `Md4gPlusMobiledata` | `bg-primary` | ✅ green | "LTE+ Signal" / "4G Carrier Aggregation" |
 | `LTE` no CA | `Md4gMobiledata` | `bg-primary` | ✅ green | "LTE Signal" / "4G Connected" |
 | No 4G/5G (default) | `Md3gMobiledata` (dimmed) | `bg-muted` | ❌ red | "Signal" / "No 4G/5G" |
+
+### Recent Activities — Event Severity Model
+
+Events are categorized as **positive** (green check ✅) or **negative** (red X ❌). There is no intermediate/warning icon — the frontend maps `info` → check, `warning`/`error` → X.
+
+**Positive events** (`severity: "info"`) — connection improvements:
+
+| Event | Example Message |
+|-------|----------------|
+| Modem signal restored | "Modem signal restored" |
+| Network mode upgrade | "Network mode changed from LTE to 5G-NSA" |
+| 5G NR anchor acquired | "5G NR anchor acquired (N41)" |
+| LTE/NR CA activated | "LTE Carrier Aggregation activated (3 carriers)" |
+| Carrier count increased | "LTE carriers changed from 2 to 3" |
+| Internet restored | "Internet connectivity restored" |
+| Band change (neutral) | "LTE band changed from B3 to B28" |
+| Cell handoff (neutral) | "LTE cell handoff (PCI: 135 -> 200)" |
+
+**Negative events** (`severity: "warning"`) — connection degradations:
+
+| Event | Example Message |
+|-------|----------------|
+| Modem became unreachable | "Modem became unreachable" |
+| Network mode downgrade | "Network mode changed from 5G-NSA to LTE" |
+| 5G NR anchor lost | "5G NR anchor lost" |
+| LTE/NR CA deactivated | "LTE Carrier Aggregation deactivated" |
+| Carrier count decreased | "NR carriers changed from 3 to 2" |
+| Internet lost | "Internet connectivity lost" |
+
+**Downgrade detection logic (backend):** Network mode changes use a `case` match against `"$prev-$current"` pairs: `5G-SA-5G-NSA`, `5G-SA-LTE`, `5G-NSA-LTE` → `warning`. All other transitions → `info`. Carrier count changes compare `new_total` vs `prev_total` — decrease → `warning`, increase → `info`.
 
 ---
 
@@ -517,6 +549,7 @@ chmod +x /usr/lib/qmanager/qlog.sh
 chmod +x /etc/init.d/qmanager
 chmod +x /www/cgi-bin/quecmanager/at_cmd/fetch_data.sh
 chmod +x /www/cgi-bin/quecmanager/at_cmd/send_command.sh
+chmod +x /www/cgi-bin/quecmanager/at_cmd/fetch_events.sh
 ```
 
 ### Service Management
@@ -751,6 +784,7 @@ Key design decisions summarized here for quick reference:
 | `/tmp/qmanager_ping.json` | Ping daemon | Poller, Watchcat | Raw ping results (RTT, reachable, streaks, history) |
 | `/tmp/qmanager_watchcat.json` | Watchcat | Poller | Watchcat state (current state, failure count, tier, cooldown) |
 | `/tmp/qmanager_ping_history` | Ping daemon | Ping daemon (self) | Flat-file ring buffer of RTT values (one per line) |
+| `/tmp/qmanager_events.json` | Poller (detect_events) | Events CGI (fetch_events.sh) | NDJSON ring buffer of network events (band changes, handoffs, CA, connectivity). Max 50 entries. |
 | `/tmp/qmanager.log` | All daemons | `qmanager_logread` | Centralized log file |
 
 ### Flag Files Registry
