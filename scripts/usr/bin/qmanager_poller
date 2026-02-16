@@ -85,6 +85,7 @@ t2_nr_ca_active=false
 t2_nr_ca_count=0
 t2_total_bandwidth_mhz=0
 t2_bandwidth_details=""
+t2_carrier_components="[]"
 t2_apn=""
 t2_primary_dns=""
 t2_secondary_dns=""
@@ -569,6 +570,7 @@ poll_tier2() {
         t2_nr_ca_count=0
         t2_total_bandwidth_mhz=0
         t2_bandwidth_details=""
+        t2_carrier_components="[]"
     fi
     sleep "$SIP_DELAY"
 
@@ -822,6 +824,7 @@ write_cache() {
     "nr_ca_count": ${t2_nr_ca_count},
     "total_bandwidth_mhz": ${t2_total_bandwidth_mhz:-0},
     "bandwidth_details": "${t2_bandwidth_details}",
+    "carrier_components": ${t2_carrier_components},
     "apn": "${t2_apn}",
     "wan_ipv4": "${t2_wan_ipv4}",
     "wan_ipv6": "${t2_wan_ipv6}",

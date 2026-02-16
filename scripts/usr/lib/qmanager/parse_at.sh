@@ -449,14 +449,36 @@ _nr_bw_to_mhz() {
 }
 
 # -----------------------------------------------------------------------------
-# Parse AT+QCAINFO (Tier 2) — Carrier Aggregation status + bandwidth
+# Parse AT+QCAINFO (Tier 2) — Carrier Aggregation status + bandwidth +
+#   per-carrier component details
 # Populates: t2_ca_active, t2_ca_count, t2_nr_ca_active, t2_nr_ca_count,
-#            t2_total_bandwidth_mhz, t2_bandwidth_details
+#            t2_total_bandwidth_mhz, t2_bandwidth_details,
+#            t2_carrier_components (JSON array string)
+#
+# Per-carrier component output (JSON array):
+#   [{"type":"PCC","technology":"LTE","band":"B3","earfcn":1350,
+#     "bandwidth_mhz":15,"pci":135,"rsrp":-115,"rsrq":-15,
+#     "rssi":-82,"sinr":5}, ...]
+#
+# AT+QCAINFO response formats (all fields after stripping +QCAINFO: and quotes/spaces):
+#
+# LTE PCC/SCC: type,freq,bw_rb,LTEBAND<N>,state,PCI,RSRP,RSRQ,RSSI,RSSNR[,...]
+#   Positions:  1    2    3     4          5     6   7    8    9    10
+#
+# NR short (PCC or old SCC): type,freq,bw_enum,NR5GBAND<N>,PCI[,RSRP,RSRQ[,SNR]]
+#   Positions:                1    2    3       4           5  6    7     8
+#   Total fields: 5-8
+#
+# NR long (SCC with UL info): type,freq,bw_enum,NR5GBAND<N>,state,PCI,UL_cfg,UL_bw,UL_ARFCN[,RSRP,RSRQ[,SNR]]
+#   Positions:                 1    2    3       4           5     6   7      8     9       10   11    12
+#   Total fields: 9-12
+#
+# NR_SNR conversion: actual_dB = raw_value / 100 (3GPP)
 # -----------------------------------------------------------------------------
 parse_ca_info() {
     local raw="$1"
 
-    # --- CA counts (existing logic) ---
+    # --- CA counts ---
     local lte_scc_count
     lte_scc_count=$(printf '%s\n' "$raw" | grep '+QCAINFO: "SCC"' | grep -c 'LTE BAND')
 
@@ -479,61 +501,104 @@ parse_ca_info() {
         t2_nr_ca_count=0
     fi
 
-    # --- Bandwidth extraction ---
-    # Parse every QCAINFO line (PCC + all SCCs) to sum total bandwidth
-    # and build a per-band breakdown string for the tooltip.
-    #
-    # LTE lines:  +QCAINFO: "PCC",<freq>,<bw_rb>,"LTE BAND X",...
-    # NR lines:   +QCAINFO: "SCC",<freq>,<bw_enum>,"NR5G BAND X",...
-    # SA PCC:     +QCAINFO: "PCC",<freq>,<bw_enum>,"NR5G BAND X",...
-    #
-    # Fields: type(1), freq(2), bandwidth(3), band_string(4), ...
-    # Band string is quoted, e.g. "LTE BAND 3" or "NR5G BAND 41"
-
+    # --- Bandwidth + per-carrier component parsing ---
     local total_mhz=0
     local details=""
+    local ca_json="["
+    local first_cc=true
     local qca_lines
     qca_lines=$(printf '%s\n' "$raw" | grep '^+QCAINFO:')
 
     if [ -z "$qca_lines" ]; then
         t2_total_bandwidth_mhz=0
         t2_bandwidth_details=""
+        t2_carrier_components="[]"
         return
     fi
 
-    # Process each QCAINFO line via file redirect (not pipe) to avoid
-    # the BusyBox subshell trap where piped while loops can't set globals.
+    # Process via file redirect to avoid BusyBox subshell trap.
     local tmpfile="/tmp/qmanager_ca_parse.tmp"
     printf '%s\n' "$qca_lines" > "$tmpfile"
 
     while IFS= read -r line; do
+        # Strip prefix, quotes, spaces, carriage returns
         local csv
-        csv=$(printf '%s' "$line" | sed 's/+QCAINFO: //g' | tr -d '\r')
+        csv=$(printf '%s' "$line" | sed 's/+QCAINFO: //g' | tr -d '"' | tr -d ' ' | tr -d '\r')
+
+        local cc_type
+        cc_type=$(printf '%s' "$csv" | cut -d',' -f1)
+
+        local freq
+        freq=$(printf '%s' "$csv" | cut -d',' -f2)
 
         local bw_raw
-        bw_raw=$(printf '%s' "$csv" | cut -d',' -f3 | tr -d ' ')
+        bw_raw=$(printf '%s' "$csv" | cut -d',' -f3)
 
         local band_str
-        band_str=$(printf '%s' "$csv" | cut -d',' -f4 | tr -d '"' | tr -d ' ')
+        band_str=$(printf '%s' "$csv" | cut -d',' -f4)
 
-        local mhz=0
-        local band_short=""
+        # Count total comma-separated fields
+        local nfields
+        nfields=$(printf '%s' "$csv" | awk -F',' '{print NF}')
+
+        local tech="" band_short="" mhz=0
+        local cc_pci="null" cc_rsrp="null" cc_rsrq="null" cc_rssi="null" cc_sinr="null"
 
         case "$band_str" in
             LTEBAND*)
+                # ---- LTE line ----
+                tech="LTE"
                 mhz=$(_lte_rb_to_mhz "$bw_raw")
                 local band_num
                 band_num=$(printf '%s' "$band_str" | sed 's/LTEBAND//')
                 band_short="B${band_num}"
+
+                # LTE fields: type(1),freq(2),bw(3),band(4),state(5),PCI(6),RSRP(7),RSRQ(8),RSSI(9),RSSNR(10)
+                cc_pci=$(printf '%s' "$csv" | cut -d',' -f6)
+                cc_rsrp=$(printf '%s' "$csv" | cut -d',' -f7)
+                cc_rsrq=$(printf '%s' "$csv" | cut -d',' -f8)
+                cc_rssi=$(printf '%s' "$csv" | cut -d',' -f9)
+                cc_sinr=$(printf '%s' "$csv" | cut -d',' -f10)
                 ;;
             NR5GBAND*|NRDCBAND*)
+                # ---- NR line ----
+                tech="NR"
                 mhz=$(_nr_bw_to_mhz "$bw_raw")
                 local band_num
                 band_num=$(printf '%s' "$band_str" | sed 's/NR5GBAND//;s/NRDCBAND//')
                 band_short="N${band_num}"
+
+                if [ "$nfields" -ge 9 ]; then
+                    # Long form (SCC with UL info):
+                    # type(1),freq(2),bw(3),band(4),state(5),PCI(6),UL_cfg(7),UL_bw(8),UL_ARFCN(9)[,RSRP(10),RSRQ(11)[,SNR(12)]]
+                    cc_pci=$(printf '%s' "$csv" | cut -d',' -f6)
+                    [ "$nfields" -ge 10 ] && cc_rsrp=$(printf '%s' "$csv" | cut -d',' -f10)
+                    [ "$nfields" -ge 11 ] && cc_rsrq=$(printf '%s' "$csv" | cut -d',' -f11)
+                    if [ "$nfields" -ge 12 ]; then
+                        local raw_snr
+                        raw_snr=$(printf '%s' "$csv" | cut -d',' -f12)
+                        cc_sinr=$(printf '%s' "$raw_snr" | awk '{if($1+0==$1) printf "%.1f", $1/100; else print "null"}')
+                    fi
+                else
+                    # Short form (PCC or old SCC):
+                    # type(1),freq(2),bw(3),band(4),PCI(5)[,RSRP(6),RSRQ(7)[,SNR(8)]]
+                    cc_pci=$(printf '%s' "$csv" | cut -d',' -f5)
+                    [ "$nfields" -ge 6 ] && cc_rsrp=$(printf '%s' "$csv" | cut -d',' -f6)
+                    [ "$nfields" -ge 7 ] && cc_rsrq=$(printf '%s' "$csv" | cut -d',' -f7)
+                    if [ "$nfields" -ge 8 ]; then
+                        local raw_snr
+                        raw_snr=$(printf '%s' "$csv" | cut -d',' -f8)
+                        cc_sinr=$(printf '%s' "$raw_snr" | awk '{if($1+0==$1) printf "%.1f", $1/100; else print "null"}')
+                    fi
+                fi
+                ;;
+            *)
+                # Unrecognized band string — skip
+                continue
                 ;;
         esac
 
+        # --- Accumulate bandwidth totals ---
         if [ "$mhz" -gt 0 ] 2>/dev/null; then
             total_mhz=$((total_mhz + mhz))
             if [ -n "$details" ]; then
@@ -542,11 +607,32 @@ parse_ca_info() {
                 details="${band_short}: ${mhz} MHz"
             fi
         fi
+
+        # --- Sanitize numeric fields (empty / dash / non-numeric → null) ---
+        case "$cc_pci"  in ''|'-'|*[!0-9-]*) cc_pci="null"  ;; esac
+        case "$cc_rsrp" in ''|'-'|*[!0-9-]*) cc_rsrp="null" ;; esac
+        case "$cc_rsrq" in ''|'-'|*[!0-9-]*) cc_rsrq="null" ;; esac
+        case "$cc_rssi" in ''|'-'|*[!0-9-]*) cc_rssi="null" ;; esac
+        # cc_sinr may be a float (NR /100 conversion) — validated by awk above
+        case "$cc_sinr" in ''|'-') cc_sinr="null" ;; esac
+
+        # --- Append JSON object ---
+        if [ "$first_cc" = true ]; then
+            first_cc=false
+        else
+            ca_json="${ca_json},"
+        fi
+
+        ca_json="${ca_json}{\"type\":\"${cc_type}\",\"technology\":\"${tech}\",\"band\":\"${band_short}\",\"earfcn\":${freq:-null},\"bandwidth_mhz\":${mhz},\"pci\":${cc_pci},\"rsrp\":${cc_rsrp},\"rsrq\":${cc_rsrq},\"rssi\":${cc_rssi},\"sinr\":${cc_sinr}}"
+
     done < "$tmpfile"
     rm -f "$tmpfile"
 
+    ca_json="${ca_json}]"
+
     t2_total_bandwidth_mhz=$total_mhz
     t2_bandwidth_details="$details"
+    t2_carrier_components="$ca_json"
 }
 
 # -----------------------------------------------------------------------------

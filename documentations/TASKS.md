@@ -26,12 +26,12 @@ All 10 home page components are wired to live data and functional.
 | **Signal History** | `signal-history.tsx` | ✅ Done | Self-contained: `useSignalHistory()` hook, per-antenna NDJSON, metric toggle, time range |
 | **Speedtest Dialog** | `speedtest-dialog.tsx` | ✅ Done | On-demand via `speedtest_*.sh` CGI endpoints, no modem interaction |
 
-### Cellular Information Page (`/cellular`) — 🔄 IN PROGRESS
+### Cellular Information Page (`/cellular`) — ✅ COMPLETE
 
 | Component | File | Status | Data Source |
 |-----------|------|--------|-------------|
 | **Cellular Information** | `cell-data.tsx` | ✅ Done | `data.network` (ISP, APN, type, CA, bandwidth, WAN IP, DNS) + `data.lte`/`data.nr` (Cell ID, TAC) + `data.device` (MIMO) |
-| **Active Bands** | `active-bands.tsx` | ⬜ TODO | Requires detailed per-carrier QCAINFO data (per-band RSRP/RSRQ/SINR/bandwidth/EARFCN/PCI). Needs QCAINFO parser rework. |
+| **Active Bands** | `active-bands.tsx` | ✅ Done | Per-carrier QCAINFO data. Accordion UI with signal bars, badges (LTE/NR, PCC/SCC), bandwidth, EARFCN, PCI. |
 
 **Cellular Information card — implementation details:**
 
@@ -51,6 +51,24 @@ All 10 home page components are wired to live data and functional.
 | TypeScript types | Added 7 fields to `NetworkStatus` interface in `types/modem-status.ts` | ✅ Done |
 | Frontend wiring | `cell-data.tsx` converted from hardcoded to data-driven with props from `useModemStatus()` | ✅ Done |
 
+**Active Bands card — implementation details:**
+
+- `parse_ca_info()` in `parse_at.sh` extended to build per-carrier JSON array (`t2_carrier_components`)
+- Parses LTE PCC/SCC lines (field pos: type,freq,bw_rb,band,state,PCI,RSRP,RSRQ,RSSI,RSSNR)
+- Parses NR lines in two forms: short (5–8 fields) and long (9–12 fields, with UL info)
+- NR_SNR converted from raw /100 to actual dB (3GPP spec) via awk
+- Sanitizes empty/dash/non-numeric values → `null`
+- Frontend: Accordion with expandable per-band detail. Technology badge (LTE=green, NR=blue), PCC/SCC badge, signal progress bars with quality coloring, bandwidth/EARFCN/PCI info rows
+- `signalToProgress()` utility maps signal dBm/dB to 0–100% using threshold ranges
+
+| Task | Description | Status |
+|------|-------------|--------|
+| QCAINFO per-carrier parsing | Extended `parse_ca_info()` to output JSON array with per-band details | ✅ Done |
+| NR_SNR conversion | Raw /100 conversion for NR SNR values in awk | ✅ Done |
+| Poller state + JSON output | `t2_carrier_components` state var, written to `network.carrier_components` in cache | ✅ Done |
+| TypeScript types | `CarrierComponent` interface, `carrier_components` in `NetworkStatus`, `signalToProgress()` | ✅ Done |
+| Frontend wiring | Accordion UI with signal metrics, badges, loading/empty states | ✅ Done |
+
 ---
 
 ## Remaining Work
@@ -59,7 +77,7 @@ All 10 home page components are wired to live data and functional.
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | **Active Bands card** | ⬜ TODO | Detailed per-carrier QCAINFO data. Requires QCAINFO parser rework to output per-band arrays. |
+| 1 | **Active Bands card** | ✅ Done | Per-carrier QCAINFO parser rework. JSON array with band/earfcn/bw/pci/rsrp/rsrq/sinr per CC. NR_SNR /100 conversion. |
 | 2 | **Terminal Page** | ⬜ TODO | Wire to `send_command.sh` CGI endpoint (POST). Block `QSCAN` with user-facing message. |
 | 3 | **Cell Scanner Page** | ⬜ TODO | Dedicated endpoint for `AT+QSCAN` with progress indicator and long-command flag coordination. |
 | 4 | **Band Locking / APN Management** | ⬜ TODO | Write-path CGI endpoints (currently only read-path exists). |
@@ -97,6 +115,7 @@ All 10 home page components are wired to live data and functional.
 - ~~NR MIMO layers~~ ✅ — Moved to Tier 2, `nr5g_mimo_layers` (not `nr_mimo_layers`)
 - ~~TA-based cell distance~~ ✅ — LTE + NR, 3GPP formulas, BusyBox-safe parsing
 - ~~NSA SCS parsing~~ ✅ — Fixed `\r` carriage return on last CSV field
+- ~~Active Bands card~~ ✅ — Per-carrier QCAINFO parser rework, JSON array output, NR_SNR /100 conversion, accordion UI
 
 </details>
 

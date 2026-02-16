@@ -28,7 +28,10 @@ const CellularInformationComponent = () => {
           device={data?.device ?? null}
           isLoading={isLoading}
         />
-        <ActiveBandsComponent />
+        <ActiveBandsComponent
+          carrierComponents={data?.network?.carrier_components ?? null}
+          isLoading={isLoading}
+        />
       </div>
     </div>
   );

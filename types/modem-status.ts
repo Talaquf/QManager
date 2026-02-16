@@ -105,6 +105,32 @@ export interface NetworkStatus {
   primary_dns: string;
   /** Secondary DNS server from AT+CGCONTRDP */
   secondary_dns: string;
+  /** Per-carrier component details from AT+QCAINFO (PCC + all SCCs) */
+  carrier_components: CarrierComponent[];
+}
+
+/** A single carrier component from AT+QCAINFO (PCC or SCC) */
+export interface CarrierComponent {
+  /** Carrier type: PCC (primary) or SCC (secondary) */
+  type: "PCC" | "SCC";
+  /** Radio technology */
+  technology: "LTE" | "NR";
+  /** Band name in 3GPP notation, e.g. "B3" or "N41" */
+  band: string;
+  /** E-UTRA/NR ARFCN */
+  earfcn: number | null;
+  /** Bandwidth in MHz */
+  bandwidth_mhz: number;
+  /** Physical Cell ID */
+  pci: number | null;
+  /** Reference Signal Received Power (dBm) */
+  rsrp: number | null;
+  /** Reference Signal Received Quality (dB) */
+  rsrq: number | null;
+  /** Received Signal Strength Indication (dBm). LTE only, null for NR. */
+  rssi: number | null;
+  /** Signal to Interference plus Noise Ratio (dB). NR values are already converted (raw/100). */
+  sinr: number | null;
 }
 
 export interface LteStatus {
@@ -473,6 +499,22 @@ export function formatDistance(km: number | null): string {
   if (km < 0.01) return "< 10 m";
   if (km < 1) return `${Math.round(km * 1000)} m`;
   return `${km.toFixed(2)} km`;
+}
+
+/**
+ * Converts a signal value to a 0–100 percentage for progress bars.
+ * Maps the value linearly within its quality range.
+ */
+export function signalToProgress(
+  value: number | null,
+  thresholds: SignalThresholds
+): number {
+  if (value === null || value === undefined) return 0;
+  // Map from [poor, excellent] → [0, 100]
+  const range = thresholds.excellent - thresholds.poor;
+  if (range === 0) return 50;
+  const pct = ((value - thresholds.poor) / range) * 100;
+  return Math.max(0, Math.min(100, pct));
 }
 
 /**

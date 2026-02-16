@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 16, 2026 (Cellular Information Card Wired)
+**Last Updated:** February 16, 2026 (Active Bands Card Wired — Cellular Page Complete)
 
 ---
 
