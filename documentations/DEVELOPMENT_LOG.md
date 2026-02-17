@@ -2,7 +2,7 @@
 
 **Project:** QManager — Custom GUI for Quectel RM551E-GL 5G Modem  
 **Platform:** OpenWRT (Embedded Linux)  
-**Last Updated:** February 16, 2026 (Active Bands Card Wired — Cellular Page Complete)
+**Last Updated:** February 17, 2026 (Cellular & Radio Information Page Complete — EARFCN Utility Added)
 
 ---
 
@@ -153,6 +153,9 @@ echo "DEBUG" > /etc/qmanager/log_level
 | `hooks/use-signal-history.ts` | Signal History hook — fetches `/cgi-bin/.../fetch_signal_history.sh` every 10s, picks best antenna per RAT, provides `chartData` (last 10 points), `raw`, `isLoading`, `error` |
 | `components/dashboard/signal-history.tsx` | **Wired** — Per-antenna signal chart. Metric toggle (RSRP/RSRQ/SINR), time range selector, LTE vs 5G dual area chart via Recharts |
 | `components/dashboard/live-latency.tsx` | **Updated** — Added speedtest play button that opens `SpeedtestDialog`, manages dialog open state |
+| `lib/earfcn.ts` | **EARFCN/NR-ARFCN Utility** — DL/UL frequency calculation (3GPP TS 36.101 + 38.104 global raster), band name lookup, duplex mode lookup. Handles NR band overlap ambiguity (e.g. ARFCN 528030 → n7 FDD vs n41 TDD) via optional band hint parameter. Used by Active Bands component. |
+| `components/cellular/active-bands.tsx` | **Wired** — Per-carrier accordion with signal bars, technology+duplex badge (e.g. "PCC LTE FDD"), band name, DL/UL frequency, bandwidth, EARFCN, PCI |
+| `components/cellular/cell-data.tsx` | **Wired** — Cellular Information card with ISP, APN, network type, Cell ID, TAC, bandwidth, CA, MIMO, WAN IP, DNS |
 
 ---
 
@@ -749,7 +752,7 @@ All 10 home page components are wired to live data and functional:
 
 5. **Terminal Page** — Wire to `send_command.sh` CGI endpoint (POST). Block `QSCAN` commands with user-facing message.
 6. **Cell Scanner Page** — Dedicated endpoint for `AT+QSCAN` with progress indicator and long-command flag coordination.
-7. **Cellular Information Page** — Detailed CA info, neighbor cells, band configuration.
+7. ~~**Cellular Information Page**~~ ✅ Done — Cellular Information card + Active Bands card. `lib/earfcn.ts` for DL/UL frequency, band name, duplex mode. See `TASKS.md` for full implementation details.
 8. **Band Locking / APN Management** — Write-path CGI endpoints (currently only read-path exists).
 
 ### Connectivity & Watchcat (See: `documentations/CONNECTIVITY_ARCHITECTURE.md`)

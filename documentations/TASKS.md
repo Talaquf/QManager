@@ -1,6 +1,6 @@
 # QManager Task Tracker
 
-**Last Updated:** February 16, 2026
+**Last Updated:** February 17, 2026
 
 This file tracks component wiring progress, active work, and remaining tasks.  
 For architecture, AT command reference, JSON contract, and deployment notes, see `DEVELOPMENT_LOG.md`.
@@ -58,8 +58,9 @@ All 10 home page components are wired to live data and functional.
 - Parses NR lines in two forms: short (5–8 fields) and long (9–12 fields, with UL info)
 - NR_SNR converted from raw /100 to actual dB (3GPP spec) via awk
 - Sanitizes empty/dash/non-numeric values → `null`
-- Frontend: Accordion with expandable per-band detail. Technology badge (LTE=green, NR=blue), PCC/SCC badge, signal progress bars with quality coloring, bandwidth/EARFCN/PCI info rows
+- Frontend: Accordion with expandable per-band detail. Technology badge (LTE=green, NR=blue, with duplex mode), PCC/SCC badge, signal progress bars with quality coloring, bandwidth/EARFCN/PCI/frequency info rows
 - `signalToProgress()` utility maps signal dBm/dB to 0–100% using threshold ranges
+- `lib/earfcn.ts` shared utility: EARFCN/NR-ARFCN → DL/UL frequency calculation (3GPP TS 36.101 + 38.104), band name lookup, duplex mode lookup. Handles NR band overlap ambiguity by accepting optional band hint.
 
 | Task | Description | Status |
 |------|-------------|--------|
@@ -68,6 +69,8 @@ All 10 home page components are wired to live data and functional.
 | Poller state + JSON output | `t2_carrier_components` state var, written to `network.carrier_components` in cache | ✅ Done |
 | TypeScript types | `CarrierComponent` interface, `carrier_components` in `NetworkStatus`, `signalToProgress()` | ✅ Done |
 | Frontend wiring | Accordion UI with signal metrics, badges, loading/empty states | ✅ Done |
+| EARFCN utility (`lib/earfcn.ts`) | DL/UL frequency calc, band name lookup, duplex mode. LTE (3GPP TS 36.101) + NR (3GPP TS 38.104 global raster). NR overlap resolution via band hint. | ✅ Done |
+| Active Bands enhancements | Badge shows duplex mode (FDD/TDD/SDL). Accordion header shows EARFCN. Expanded detail shows Band Name, DL Frequency, UL Frequency. | ✅ Done |
 
 ---
 
@@ -77,7 +80,7 @@ All 10 home page components are wired to live data and functional.
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| 1 | **Active Bands card** | ✅ Done | Per-carrier QCAINFO parser rework. JSON array with band/earfcn/bw/pci/rsrp/rsrq/sinr per CC. NR_SNR /100 conversion. |
+| 1 | **Active Bands card** | ✅ Done | Per-carrier QCAINFO parser rework. JSON array with band/earfcn/bw/pci/rsrp/rsrq/sinr per CC. NR_SNR /100 conversion. `lib/earfcn.ts` for DL/UL freq calc + band name + duplex mode. |
 | 2 | **Terminal Page** | ⬜ TODO | Wire to `send_command.sh` CGI endpoint (POST). Block `QSCAN` with user-facing message. |
 | 3 | **Cell Scanner Page** | ⬜ TODO | Dedicated endpoint for `AT+QSCAN` with progress indicator and long-command flag coordination. |
 | 4 | **Band Locking / APN Management** | ⬜ TODO | Write-path CGI endpoints (currently only read-path exists). |
@@ -115,7 +118,7 @@ All 10 home page components are wired to live data and functional.
 - ~~NR MIMO layers~~ ✅ — Moved to Tier 2, `nr5g_mimo_layers` (not `nr_mimo_layers`)
 - ~~TA-based cell distance~~ ✅ — LTE + NR, 3GPP formulas, BusyBox-safe parsing
 - ~~NSA SCS parsing~~ ✅ — Fixed `\r` carriage return on last CSV field
-- ~~Active Bands card~~ ✅ — Per-carrier QCAINFO parser rework, JSON array output, NR_SNR /100 conversion, accordion UI
+- ~~Active Bands card~~ ✅ — Per-carrier QCAINFO parser rework, JSON array output, NR_SNR /100 conversion, accordion UI, `lib/earfcn.ts` (DL/UL frequency, band name, duplex mode), badge shows FDD/TDD
 
 </details>
 
