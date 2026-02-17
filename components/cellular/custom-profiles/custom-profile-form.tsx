@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { DownloadIcon } from "lucide-react";
+import { toast } from "sonner";
 
 import type { SimProfile, CurrentModemSettings } from "@/types/sim-profile";
 import type { ProfileFormData } from "@/hooks/use-sim-profiles";
@@ -132,7 +133,6 @@ const CustomProfileFormComponent = ({
   const [form, setForm] = useState<ProfileFormData>(DEFAULT_FORM_STATE);
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const isEditing = !!editingProfile;
 
@@ -153,7 +153,6 @@ const CustomProfileFormComponent = ({
       editingProfile ? profileToFormData(editingProfile) : DEFAULT_FORM_STATE,
     );
     setErrors({});
-    setSuccessMsg(null);
   }
 
   // Pre-fill from current modem settings when loaded (create mode only)
@@ -262,7 +261,6 @@ const CustomProfileFormComponent = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSuccessMsg(null);
 
     if (!validate()) return;
 
@@ -271,7 +269,7 @@ const CustomProfileFormComponent = ({
     setIsSaving(false);
 
     if (result) {
-      setSuccessMsg(
+      toast.success(
         isEditing
           ? "Profile updated successfully."
           : "Profile created successfully.",
@@ -279,6 +277,12 @@ const CustomProfileFormComponent = ({
       if (!isEditing) {
         setForm(DEFAULT_FORM_STATE);
       }
+    } else {
+      toast.error(
+        isEditing
+          ? "Failed to update profile."
+          : "Failed to create profile.",
+      );
     }
   };
 
@@ -288,7 +292,6 @@ const CustomProfileFormComponent = ({
     } else {
       setForm(DEFAULT_FORM_STATE);
       setErrors({});
-      setSuccessMsg(null);
     }
   };
 
@@ -569,12 +572,6 @@ const CustomProfileFormComponent = ({
               )}
 
               {/* --- Actions --- */}
-              {successMsg && (
-                <p className="text-sm text-green-600 dark:text-green-400">
-                  {successMsg}
-                </p>
-              )}
-
               <div className="flex gap-3 pt-2">
                 <Button type="submit" disabled={isSaving}>
                   {isSaving && <Spinner className="h-4 w-4" />}
