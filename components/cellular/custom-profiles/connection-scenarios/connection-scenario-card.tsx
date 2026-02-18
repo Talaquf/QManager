@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Gamepad2, Play, Zap, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,10 +14,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { AbstractPattern } from "./abstract-pattern";
 import { AddScenarioItem } from "./add-scenario-item";
 import { ActiveConfigCard } from "./active-config-card";
 import { ScenarioItem, Scenario } from "./scenario-item";
+import { useConnectionScenarios } from "@/hooks/use-connection-scenarios";
 
 // Gradient options for new scenarios
 const gradientOptions = [
@@ -29,9 +31,57 @@ const gradientOptions = [
   { id: "slate", value: "from-slate-600 via-gray-700 to-zinc-800" },
 ];
 
+// Default (built-in) scenarios — icons are UI-only, not stored in backend
+const DEFAULT_SCENARIOS: Scenario[] = [
+  {
+    id: "balanced",
+    name: "Balanced",
+    description: "Auto band selection",
+    icon: Zap,
+    gradient: "from-emerald-500 via-teal-500 to-cyan-500",
+    pattern: "balanced",
+    config: {
+      bands: ["Auto"],
+      mode: "Auto",
+      optimization: "Balanced",
+    },
+  },
+  {
+    id: "gaming",
+    name: "Gaming",
+    description: "Low latency, SA priority",
+    icon: Gamepad2,
+    gradient: "from-violet-600 via-purple-600 to-indigo-700",
+    pattern: "gaming",
+    config: {
+      bands: ["Auto"],
+      mode: "5G SA Only",
+      optimization: "Latency",
+    },
+  },
+  {
+    id: "streaming",
+    name: "Streaming",
+    description: "High bandwidth, stable connection",
+    icon: Play,
+    gradient: "from-rose-500 via-pink-500 to-orange-400",
+    pattern: "streaming",
+    config: {
+      bands: ["Auto"],
+      mode: "5G SA / NSA",
+      optimization: "Throughput",
+    },
+  },
+];
+
 // Main Component
 const ConnectionScenariosCard = () => {
-  const [activeScenario, setActiveScenario] = useState("gaming");
+  const {
+    activeScenarioId,
+    isActivating,
+    activateScenario,
+  } = useConnectionScenarios();
+
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [newScenarioName, setNewScenarioName] = useState("");
@@ -48,50 +98,41 @@ const ConnectionScenariosCard = () => {
   const [editMode, setEditMode] = useState("");
   const [editOptimization, setEditOptimization] = useState("");
 
-  const [scenarios, setScenarios] = useState<Scenario[]>([
-    {
-      id: "balanced",
-      name: "Balanced",
-      description: "Auto band selection",
-      icon: Zap,
-      gradient: "from-emerald-500 via-teal-500 to-cyan-500",
-      pattern: "balanced",
-      config: {
-        bands: ["Auto"],
-        mode: "Auto",
-        optimization: "Balanced",
-      },
-    },
-    {
-      id: "gaming",
-      name: "Gaming",
-      description: "Low latency, N41/N78 priority",
-      icon: Gamepad2,
-      gradient: "from-violet-600 via-purple-600 to-indigo-700",
-      pattern: "gaming",
-      config: {
-        bands: ["N41", "N78"],
-        mode: "5G SA Preferred",
-        optimization: "Latency",
-      },
-    },
-    {
-      id: "streaming",
-      name: "Streaming",
-      description: "High bandwidth, stable connection",
-      icon: Play,
-      gradient: "from-rose-500 via-pink-500 to-orange-400",
-      pattern: "streaming",
-      config: {
-        bands: ["N41", "B66", "B2"],
-        mode: "5G NSA + CA",
-        optimization: "Throughput",
-      },
-    },
-  ]);
+  // Custom scenarios (client-side only for now — no backend persistence)
+  const [customScenarios, setCustomScenarios] = useState<Scenario[]>([]);
 
-  const activeScenarioData = scenarios.find((s) => s.id === activeScenario);
+  // Combined list: defaults + custom
+  const scenarios = [...DEFAULT_SCENARIOS, ...customScenarios];
 
+  const activeScenarioData = scenarios.find((s) => s.id === activeScenarioId);
+
+  // ---------------------------------------------------------------------------
+  // Handle activation — send to backend
+  // ---------------------------------------------------------------------------
+  const handleActivate = async (id: string) => {
+    // Don't re-activate the already active scenario or while another is in flight
+    if (id === activeScenarioId || isActivating) return;
+
+    // Only default scenarios can be activated via backend for now
+    const isDefault = DEFAULT_SCENARIOS.some((s) => s.id === id);
+    if (!isDefault) {
+      toast.info("Custom scenario activation is not yet supported.");
+      return;
+    }
+
+    const scenario = scenarios.find((s) => s.id === id);
+    const success = await activateScenario(id);
+
+    if (success) {
+      toast.success(`Switched to ${scenario?.name ?? id} scenario.`);
+    } else {
+      toast.error(`Failed to activate ${scenario?.name ?? id} scenario.`);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Custom scenario management (client-side only)
+  // ---------------------------------------------------------------------------
   const handleAddScenario = () => {
     if (!newScenarioName.trim()) return;
 
@@ -109,8 +150,7 @@ const ConnectionScenariosCard = () => {
       },
     };
 
-    setScenarios((prev) => [...prev, newScenario]);
-    setActiveScenario(newScenario.id);
+    setCustomScenarios((prev) => [...prev, newScenario]);
     setShowAddDialog(false);
     setNewScenarioName("");
     setNewScenarioDescription("");
@@ -118,16 +158,12 @@ const ConnectionScenariosCard = () => {
   };
 
   const handleDeleteScenario = (id: string) => {
-    setScenarios((prev) => prev.filter((s) => s.id !== id));
-    // If the deleted scenario was active, switch to the first available scenario
-    if (activeScenario === id) {
-      const remainingScenarios = scenarios.filter((s) => s.id !== id);
-      if (remainingScenarios.length > 0) {
-        setActiveScenario(remainingScenarios[0].id);
-      }
-    }
+    setCustomScenarios((prev) => prev.filter((s) => s.id !== id));
   };
 
+  // ---------------------------------------------------------------------------
+  // Edit dialog (for active scenario config display)
+  // ---------------------------------------------------------------------------
   const handleOpenEditDialog = () => {
     if (!activeScenarioData) return;
     setEditName(activeScenarioData.name);
@@ -142,7 +178,15 @@ const ConnectionScenariosCard = () => {
   const handleSaveEdit = () => {
     if (!activeScenarioData || !editName.trim()) return;
 
-    setScenarios((prev) =>
+    // Only custom scenarios can be edited
+    const isDefault = DEFAULT_SCENARIOS.some((s) => s.id === activeScenarioData.id);
+    if (isDefault) {
+      toast.info("Default scenarios cannot be edited.");
+      setShowEditDialog(false);
+      return;
+    }
+
+    setCustomScenarios((prev) =>
       prev.map((s) =>
         s.id === activeScenarioData.id
           ? {
@@ -170,8 +214,8 @@ const ConnectionScenariosCard = () => {
           <ScenarioItem
             key={scenario.id}
             scenario={scenario}
-            isActive={activeScenario === scenario.id}
-            onActivate={setActiveScenario}
+            isActive={activeScenarioId === scenario.id}
+            onActivate={handleActivate}
             onDelete={handleDeleteScenario}
           />
         ))}
@@ -180,7 +224,11 @@ const ConnectionScenariosCard = () => {
 
       {/* Row 2: Active Configuration */}
       <div className="grid grid-cols-1 @xl/main:grid-cols-2 @5xl/main:grid-cols-2 grid-flow-row *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card *:data-[slot=card]:bg-linear-to-t *:data-[slot=card]:shadow-xs">
-        <ActiveConfigCard scenario={activeScenarioData} onEdit={handleOpenEditDialog} />
+        <ActiveConfigCard
+          scenario={activeScenarioData}
+          onEdit={handleOpenEditDialog}
+          isActivating={isActivating}
+        />
       </div>
 
       {/* Add Scenario Dialog */}

@@ -1,10 +1,11 @@
 import React from "react";
-import { Settings, Clock, Signal, Zap, ChevronRight } from "lucide-react";
+import { Settings } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Spinner } from "@/components/ui/spinner";
 
 interface ScenarioConfig {
   bands: string[];
@@ -25,9 +26,10 @@ interface Scenario {
 interface ActiveConfigCardProps {
   scenario: Scenario | undefined;
   onEdit?: () => void;
+  isActivating?: boolean;
 }
 
-export const ActiveConfigCard = ({ scenario, onEdit }: ActiveConfigCardProps) => {
+export const ActiveConfigCard = ({ scenario, onEdit, isActivating }: ActiveConfigCardProps) => {
   if (!scenario) return null;
   const Icon = scenario.icon;
 
@@ -47,13 +49,23 @@ export const ActiveConfigCard = ({ scenario, onEdit }: ActiveConfigCardProps) =>
             </div>
             <div className="grid">
               <h4 className="font-semibold">{scenario.name} Configuration</h4>
-              <Badge
-                variant="outline"
-                className="bg-green-500/20 text-green-500 hover:bg-green-500/30 border border-green-300/50 backdrop-blur-sm"
-              >
-                <div className="w-2 h-2 rounded-full bg-green-500" />
-                Active
-              </Badge>
+              {isActivating ? (
+                <Badge
+                  variant="outline"
+                  className="bg-blue-500/20 text-blue-500 hover:bg-blue-500/30 border border-blue-300/50 backdrop-blur-sm"
+                >
+                  <Spinner className="h-2 w-2" />
+                  Applying…
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="bg-green-500/20 text-green-500 hover:bg-green-500/30 border border-green-300/50 backdrop-blur-sm"
+                >
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  Active
+                </Badge>
+              )}
             </div>
           </div>
           <Button variant="ghost" size="icon" onClick={onEdit}>
