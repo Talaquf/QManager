@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 
 import {
   Card,
@@ -27,6 +27,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import type { TowerLockConfig, TowerFailoverState } from "@/types/tower-locking";
 import type { ModemStatus } from "@/types/modem-status";
@@ -54,12 +55,12 @@ const TowerLockingSettingsComponent = ({
   // Local state for threshold input (debounced save)
   const [thresholdInput, setThresholdInput] = useState<string>("");
 
-  // Sync threshold from config
-  useEffect(() => {
-    if (config?.failover?.threshold !== undefined) {
-      setThresholdInput(String(config.failover.threshold));
-    }
-  }, [config?.failover?.threshold]);
+  // Sync threshold from config (adjust state during render)
+  const [prevThreshold, setPrevThreshold] = useState<number | undefined>(undefined);
+  if (config?.failover?.threshold !== undefined && config.failover.threshold !== prevThreshold) {
+    setPrevThreshold(config.failover.threshold);
+    setThresholdInput(String(config.failover.threshold));
+  }
 
   // Debounced threshold save
   const handleThresholdBlur = useCallback(() => {
@@ -184,13 +185,60 @@ const TowerLockingSettingsComponent = ({
         <CardHeader>
           <CardTitle>Tower Locking Settings</CardTitle>
           <CardDescription>
-            Configure cellular tower locking for the Primary Cell (PCell). Not
-            compatible with NR5G-NSA.
+            Configure cellular tower locking for the Primary Cell (PCell).
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <div className="grid gap-2">
+            <Separator />
+            {/* Persist Locking */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-5 w-20" />
+            </div>
+            <Separator />
+            {/* Failover */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-5 w-20" />
+            </div>
+            <Separator />
+            {/* Failover Threshold */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-8 w-16 rounded-md" />
+            </div>
+            <Separator />
+            {/* Current Signal Quality */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-36" />
+              <Skeleton className="h-5 w-14 rounded-full" />
+            </div>
+            <Separator />
+            {/* Failover Status */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+            </div>
+            <Separator />
+            {/* Schedule Locking Status */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+            </div>
+            <Separator />
+            {/* Active PCell E/AFRCN */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-36" />
+              <Skeleton className="h-4 w-12" />
+            </div>
+            <Separator />
+            {/* Active PCell ID (PCI) */}
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-4 w-12" />
+            </div>
+            <Separator />
           </div>
         </CardContent>
       </Card>
@@ -247,7 +295,9 @@ const TowerLockingSettingsComponent = ({
                 <TooltipContent>
                   <p>
                     When enabled, the device will unlock from the tower if
-                    signal quality degrades below a certain threshold or becomes
+                    signal quality
+                    <br/>
+                    degrades below a certain threshold or becomes
                     unavailable.
                   </p>
                 </TooltipContent>
@@ -277,7 +327,9 @@ const TowerLockingSettingsComponent = ({
                 <TooltipContent>
                   <p>
                     This will only take effect if Failover is enabled. Set the
-                    signal quality threshold below which the device will unlock
+                    signal quality 
+                    <br/>
+                    threshold below which the device will unlock
                     from the tower.
                   </p>
                 </TooltipContent>

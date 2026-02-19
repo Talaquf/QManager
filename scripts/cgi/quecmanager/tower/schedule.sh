@@ -116,6 +116,30 @@ fi
 # Ensure config exists
 tower_config_init
 
+# --- Scenario 1 guard: Reject enable if no lock targets configured -----------
+if [ "$ENABLED" = "true" ]; then
+    config=$(cat "$TOWER_CONFIG_FILE" 2>/dev/null)
+
+    # Check LTE: at least one cell with earfcn+pci
+    has_lte="false"
+    lte_check=$(printf '%s' "$config" | sed -n '/"cells"/,/\]/p' | grep '"earfcn"' | head -1)
+    [ -n "$lte_check" ] && has_lte="true"
+
+    # Check NR-SA: all four params non-null
+    has_nr="false"
+    chk_pci=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"pci"' | head -1 | sed 's/.*: *//;s/[, ]//g')
+    chk_arfcn=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"arfcn"' | head -1 | sed 's/.*: *//;s/[, ]//g')
+    if [ -n "$chk_pci" ] && [ "$chk_pci" != "null" ] && \
+       [ -n "$chk_arfcn" ] && [ "$chk_arfcn" != "null" ]; then
+        has_nr="true"
+    fi
+
+    if [ "$has_lte" = "false" ] && [ "$has_nr" = "false" ]; then
+        echo '{"success":false,"error":"no_lock_targets","detail":"Configure LTE or NR-SA lock targets before enabling schedule"}'
+        exit 0
+    fi
+fi
+
 qlog_info "Schedule update: enabled=$ENABLED start=$START_TIME end=$END_TIME days=$DAYS_RAW"
 
 # --- Update config file schedule section -------------------------------------

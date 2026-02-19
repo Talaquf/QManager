@@ -56,8 +56,13 @@ if [ "$MODE" = "apply" ]; then
     applied_any="false"
 
     # --- LTE Lock ---
-    # Check if LTE has configured cells (even if currently disabled,
-    # schedule should apply whatever is configured)
+    # Only apply LTE lock if lte.enabled is true in config.
+    # If user manually disabled LTE locking, the schedule respects that.
+    lte_enabled=$(printf '%s' "$config" | sed -n '/"lte"/,/\]/p' | grep '"enabled"' | head -1 | sed 's/.*: *//;s/[, ]//g')
+
+    if [ "$lte_enabled" != "true" ]; then
+        qlog_info "Schedule: LTE locking disabled in config, skipping"
+    else
     c1_earfcn=$(printf '%s' "$config" | sed -n '/"cells"/,/\]/p' | \
         awk -F'}' '{print $1}' | sed -n 's/.*"earfcn"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)
     c1_pci=$(printf '%s' "$config" | sed -n '/"cells"/,/\]/p' | \
@@ -103,8 +108,15 @@ if [ "$MODE" = "apply" ]; then
         esac
         sleep 0.2
     fi
+    fi  # end lte_enabled check
 
     # --- NR-SA Lock ---
+    # Only apply NR-SA lock if nr_sa.enabled is true in config.
+    nr_sa_enabled=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"enabled"' | head -1 | sed 's/.*: *//;s/[, ]//g')
+
+    if [ "$nr_sa_enabled" != "true" ]; then
+        qlog_info "Schedule: NR-SA locking disabled in config, skipping"
+    else
     nr_pci=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"pci"' | head -1 | sed 's/.*: *//;s/[, ]//g')
     nr_arfcn=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"arfcn"' | head -1 | sed 's/.*: *//;s/[, ]//g')
     nr_scs=$(printf '%s' "$config" | sed -n '/"nr_sa"/,/}/p' | grep '"scs"' | head -1 | sed 's/.*: *//;s/[, ]//g')
@@ -127,12 +139,15 @@ if [ "$MODE" = "apply" ]; then
                 ;;
         esac
     fi
+    fi  # end nr_sa_enabled check
 
     # --- Spawn failover watcher if enabled and something was locked ---
     if [ "$applied_any" = "true" ]; then
         # Clear previous failover activation
         rm -f "$TOWER_FAILOVER_FLAG"
         tower_spawn_failover_watcher >/dev/null
+    else
+        qlog_info "Schedule: No locks applied (both lock types disabled or no targets configured)"
     fi
 
     qlog_info "Schedule APPLY complete"
@@ -159,9 +174,11 @@ elif [ "$MODE" = "clear" ]; then
         *) qlog_info "Schedule: NR-SA lock cleared" ;;
     esac
 
-    # Update config to reflect disabled state
-    tower_config_update_lte "false" "" "" "" "" "" ""
-    tower_config_update_nr "false"
+    # NOTE: We intentionally do NOT set lte.enabled / nr_sa.enabled to false
+    # in the config. The schedule clear just unlocks the modem temporarily.
+    # The enabled flags reflect the user's intent — if the user manually
+    # disabled a lock type, the next schedule apply will respect that.
+    # If the user left them enabled, the next apply will re-lock.
 
     # Kill any running failover watcher
     tower_kill_failover_watcher

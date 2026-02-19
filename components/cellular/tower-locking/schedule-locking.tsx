@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { toast } from "sonner";
 
 import {
   Card,
@@ -22,7 +23,10 @@ import { Input } from "@/components/ui/input";
 import { Toggle } from "@/components/ui/toggle";
 import { CircleIcon } from "lucide-react";
 
-import type { TowerLockConfig, TowerScheduleConfig } from "@/types/tower-locking";
+import type {
+  TowerLockConfig,
+  TowerScheduleConfig,
+} from "@/types/tower-locking";
 import { DAY_LABELS } from "@/types/tower-locking";
 
 interface ScheduleTowerLockingProps {
@@ -43,15 +47,15 @@ const ScheduleTowerLockingComponent = ({
   // Debounce timer ref
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync from config when data loads
-  useEffect(() => {
-    if (config?.schedule) {
-      setEnabled(config.schedule.enabled);
-      setStartTime(config.schedule.start_time);
-      setEndTime(config.schedule.end_time);
-      setDays(config.schedule.days);
-    }
-  }, [config?.schedule]);
+  // Sync from config (adjust state during render)
+  const [prevSchedule, setPrevSchedule] = useState<TowerScheduleConfig | null>(null);
+  if (config?.schedule && config.schedule !== prevSchedule) {
+    setPrevSchedule(config.schedule);
+    setEnabled(config.schedule.enabled);
+    setStartTime(config.schedule.start_time);
+    setEndTime(config.schedule.end_time);
+    setDays(config.schedule.days);
+  }
 
   // Debounced save — fires 800ms after last change
   const debouncedSave = useCallback(
@@ -63,7 +67,7 @@ const ScheduleTowerLockingComponent = ({
         onScheduleChange(schedule);
       }, 800);
     },
-    [onScheduleChange]
+    [onScheduleChange],
   );
 
   // Cleanup timer on unmount
@@ -76,19 +80,27 @@ const ScheduleTowerLockingComponent = ({
   }, []);
 
   // Toggle enable/disable — save immediately (not debounced)
-  const handleEnabledChange = (checked: boolean) => {
+  // Reverts local state if the backend rejects (e.g., no lock targets configured)
+  const handleEnabledChange = async (checked: boolean) => {
     setEnabled(checked);
     // Cancel any pending debounced save
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    onScheduleChange({
+    const success = await onScheduleChange({
       enabled: checked,
       start_time: startTime,
       end_time: endTime,
       days,
     });
+    if (!success) {
+      // Backend rejected — revert toggle
+      setEnabled(!checked);
+      toast.warning(
+        "No lock targets configured"
+      );
+    }
   };
 
   const handleStartTimeChange = (value: string) => {
