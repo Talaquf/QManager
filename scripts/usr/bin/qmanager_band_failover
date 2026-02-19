@@ -1,0 +1,184 @@
+#!/bin/sh
+# =============================================================================
+# qmanager_band_failover — One-Shot Band Failover Watcher
+# =============================================================================
+# Spawned by lock.sh (via setsid) after a band lock operation when failover
+# is enabled. NOT a persistent daemon — runs once and exits.
+#
+# Lifecycle:
+#   1. Writes PID file for singleton tracking
+#   2. Sleeps 15 seconds (allows modem to settle after band change)
+#   3. Reads /tmp/qmanager_status.json to check connectivity
+#   4. If modem unreachable OR no service:
+#      a. Queries AT+QNWPREFCFG="policy_band" for full supported bands
+#      b. Resets all three band types to supported bands (unlock all)
+#      c. Writes activation flag for the UI
+#   5. Exits
+#
+# The watcher is killed and respawned by lock.sh on each new band lock,
+# so only the most recent lock operation is monitored.
+#
+# PID file:  /tmp/qmanager_band_failover.pid
+# Flag file: /tmp/qmanager_band_failover (written on activation)
+# Cache:     /tmp/qmanager_status.json (read-only)
+#
+# Dependencies: qcmd, qlog.sh
+# Install location: /usr/bin/qmanager_band_failover
+# =============================================================================
+
+# --- Logging -----------------------------------------------------------------
+. /usr/lib/qmanager/qlog.sh 2>/dev/null || {
+    qlog_init() { :; }
+    qlog_debug() { :; }
+    qlog_info() { :; }
+    qlog_warn() { :; }
+    qlog_error() { :; }
+}
+qlog_init "band_failover"
+
+# --- Configuration -----------------------------------------------------------
+PID_FILE="/tmp/qmanager_band_failover.pid"
+ACTIVATED_FLAG="/tmp/qmanager_band_failover"
+STATUS_CACHE="/tmp/qmanager_status.json"
+SETTLE_DELAY=15  # seconds to wait after band lock before checking
+
+# --- Write PID file ----------------------------------------------------------
+echo $$ > "$PID_FILE"
+
+cleanup() {
+    rm -f "$PID_FILE"
+}
+trap cleanup EXIT INT TERM
+
+qlog_info "Failover watcher started (PID=$$), waiting ${SETTLE_DELAY}s for modem to settle"
+
+# --- Wait for modem to settle ------------------------------------------------
+sleep "$SETTLE_DELAY"
+
+# --- Check connectivity from poller cache ------------------------------------
+# Read modem_reachable and service_status from the JSON cache.
+# Uses grep/sed since no jq available on BusyBox.
+
+if [ ! -f "$STATUS_CACHE" ]; then
+    qlog_warn "Status cache not found, cannot assess connectivity — exiting"
+    exit 0
+fi
+
+modem_reachable=$(grep '"modem_reachable"' "$STATUS_CACHE" 2>/dev/null | \
+    sed 's/.*: *//; s/,$//' | tr -d ' \r')
+
+service_status=$(grep '"service_status"' "$STATUS_CACHE" 2>/dev/null | \
+    sed 's/.*: *//; s/,$//' | tr -d ' "\r')
+
+qlog_debug "Post-lock check: modem_reachable=$modem_reachable service_status=$service_status"
+
+# --- Decide whether to failover ----------------------------------------------
+needs_failover=false
+
+if [ "$modem_reachable" = "false" ]; then
+    qlog_warn "Modem unreachable after band lock — triggering failover"
+    needs_failover=true
+fi
+
+case "$service_status" in
+    no_service|searching|unknown)
+        qlog_warn "Service status '$service_status' after band lock — triggering failover"
+        needs_failover=true
+        ;;
+esac
+
+if [ "$needs_failover" = "false" ]; then
+    qlog_info "Connectivity OK after band lock (status=$service_status) — no failover needed"
+    exit 0
+fi
+
+# --- Failover: Query policy_band and reset to all supported ------------------
+qlog_warn "FAILOVER: Reverting to all supported bands"
+
+result=$(qcmd 'AT+QNWPREFCFG="policy_band"' 2>/dev/null)
+rc=$?
+
+if [ $rc -ne 0 ] || [ -z "$result" ]; then
+    qlog_error "FAILOVER: Failed to query policy_band (rc=$rc) — cannot revert"
+    echo "error" > "$ACTIVATED_FLAG"
+    exit 1
+fi
+
+case "$result" in
+    *ERROR*)
+        qlog_error "FAILOVER: policy_band returned ERROR — cannot revert"
+        echo "error" > "$ACTIVATED_FLAG"
+        exit 1
+        ;;
+esac
+
+# --- Parse supported bands from policy_band response ------------------------
+all_lte=""
+all_nsa=""
+all_sa=""
+
+line=$(printf '%s\n' "$result" | grep '"lte_band"' | head -1)
+[ -n "$line" ] && all_lte=$(printf '%s' "$line" | sed 's/.*"lte_band",//' | tr -d '\r ')
+
+line=$(printf '%s\n' "$result" | grep '"nsa_nr5g_band"' | head -1)
+[ -n "$line" ] && all_nsa=$(printf '%s' "$line" | sed 's/.*"nsa_nr5g_band",//' | tr -d '\r ')
+
+line=$(printf '%s\n' "$result" | grep '"nr5g_band"' | grep -v 'nsa_' | grep -v 'nrdc_' | head -1)
+[ -n "$line" ] && all_sa=$(printf '%s' "$line" | sed 's/.*"nr5g_band",//' | tr -d '\r ')
+
+qlog_info "FAILOVER: Resetting to policy_band — LTE=$all_lte NSA=$all_nsa SA=$all_sa"
+
+# --- Apply: reset each band type (sip-don't-gulp) ---------------------------
+fail_count=0
+
+if [ -n "$all_lte" ]; then
+    lte_result=$(qcmd "AT+QNWPREFCFG=\"lte_band\",${all_lte}" 2>/dev/null)
+    case "$lte_result" in
+        *ERROR*|"")
+            qlog_error "FAILOVER: Failed to reset LTE bands"
+            fail_count=$((fail_count + 1))
+            ;;
+        *)
+            qlog_info "FAILOVER: LTE bands reset OK"
+            ;;
+    esac
+    sleep 0.2
+fi
+
+if [ -n "$all_nsa" ]; then
+    nsa_result=$(qcmd "AT+QNWPREFCFG=\"nsa_nr5g_band\",${all_nsa}" 2>/dev/null)
+    case "$nsa_result" in
+        *ERROR*|"")
+            qlog_error "FAILOVER: Failed to reset NSA NR bands"
+            fail_count=$((fail_count + 1))
+            ;;
+        *)
+            qlog_info "FAILOVER: NSA NR bands reset OK"
+            ;;
+    esac
+    sleep 0.2
+fi
+
+if [ -n "$all_sa" ]; then
+    sa_result=$(qcmd "AT+QNWPREFCFG=\"nr5g_band\",${all_sa}" 2>/dev/null)
+    case "$sa_result" in
+        *ERROR*|"")
+            qlog_error "FAILOVER: Failed to reset SA NR bands"
+            fail_count=$((fail_count + 1))
+            ;;
+        *)
+            qlog_info "FAILOVER: SA NR bands reset OK"
+            ;;
+    esac
+fi
+
+# --- Write activation flag for UI -------------------------------------------
+if [ "$fail_count" -eq 0 ]; then
+    echo "activated" > "$ACTIVATED_FLAG"
+    qlog_warn "FAILOVER COMPLETE: All bands reverted to defaults"
+else
+    echo "partial" > "$ACTIVATED_FLAG"
+    qlog_error "FAILOVER PARTIAL: $fail_count band type(s) failed to reset"
+fi
+
+exit 0
