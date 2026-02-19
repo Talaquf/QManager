@@ -100,7 +100,7 @@ const BandSettingsComponent = ({
           variant="outline"
           className="bg-muted/50 text-muted-foreground border-muted-foreground/30"
         >
-          <MinusCircleIcon className="mr-1 h-3 w-3" />
+          <MinusCircleIcon className="h-3 w-3" />
           Disabled
         </Badge>
       );
@@ -112,7 +112,7 @@ const BandSettingsComponent = ({
           variant="outline"
           className="bg-orange-500/20 text-orange-500 hover:bg-orange-500/30 border border-orange-300/50 backdrop-blur-sm"
         >
-          <TriangleAlertIcon className="mr-1 h-3 w-3" />
+          <TriangleAlertIcon className="h-3 w-3" />
           Using Default Bands
         </Badge>
       );
@@ -123,7 +123,7 @@ const BandSettingsComponent = ({
         variant="outline"
         className="bg-emerald-500/20 text-emerald-500 hover:bg-emerald-500/30 border border-emerald-300/50 backdrop-blur-sm"
       >
-        <CheckCircle2Icon className="mr-1 h-3 w-3" />
+        <CheckCircle2Icon className="h-3 w-3" />
         Ready
       </Badge>
     );

@@ -10,7 +10,7 @@
 #   2. Sleeps 15 seconds (allows modem to settle after band change)
 #   3. Reads /tmp/qmanager_status.json to check connectivity
 #   4. If modem unreachable OR no service:
-#      a. Queries AT+QNWPREFCFG="policy_band" for full supported bands
+#      a. Reads supported bands from status.json (cached at boot from policy_band)
 #      b. Resets all three band types to supported bands (unlock all)
 #      c. Writes activation flag for the UI
 #   5. Exits
@@ -92,39 +92,26 @@ if [ "$needs_failover" = "false" ]; then
     exit 0
 fi
 
-# --- Failover: Query policy_band and reset to all supported ------------------
+# --- Failover: Read supported bands from status.json cache -------------------
+# The poller collects policy_band at boot and caches it in status.json.
+# Reading from cache avoids modem lock contention during failover — important
+# since the modem may be in a degraded state when this fires.
 qlog_warn "FAILOVER: Reverting to all supported bands"
 
-result=$(qcmd 'AT+QNWPREFCFG="policy_band"' 2>/dev/null)
-rc=$?
+all_lte=$(grep '"supported_lte_bands"' "$STATUS_CACHE" 2>/dev/null | \
+    sed 's/.*: *"//; s/".*//' | tr -d '\r ')
 
-if [ $rc -ne 0 ] || [ -z "$result" ]; then
-    qlog_error "FAILOVER: Failed to query policy_band (rc=$rc) — cannot revert"
+all_nsa=$(grep '"supported_nsa_nr5g_bands"' "$STATUS_CACHE" 2>/dev/null | \
+    sed 's/.*: *"//; s/".*//' | tr -d '\r ')
+
+all_sa=$(grep '"supported_sa_nr5g_bands"' "$STATUS_CACHE" 2>/dev/null | \
+    sed 's/.*: *"//; s/".*//' | tr -d '\r ')
+
+if [ -z "$all_lte" ] && [ -z "$all_nsa" ] && [ -z "$all_sa" ]; then
+    qlog_error "FAILOVER: No supported bands found in status cache — cannot revert"
     echo "error" > "$ACTIVATED_FLAG"
     exit 1
 fi
-
-case "$result" in
-    *ERROR*)
-        qlog_error "FAILOVER: policy_band returned ERROR — cannot revert"
-        echo "error" > "$ACTIVATED_FLAG"
-        exit 1
-        ;;
-esac
-
-# --- Parse supported bands from policy_band response ------------------------
-all_lte=""
-all_nsa=""
-all_sa=""
-
-line=$(printf '%s\n' "$result" | grep '"lte_band"' | head -1)
-[ -n "$line" ] && all_lte=$(printf '%s' "$line" | sed 's/.*"lte_band",//' | tr -d '\r ')
-
-line=$(printf '%s\n' "$result" | grep '"nsa_nr5g_band"' | head -1)
-[ -n "$line" ] && all_nsa=$(printf '%s' "$line" | sed 's/.*"nsa_nr5g_band",//' | tr -d '\r ')
-
-line=$(printf '%s\n' "$result" | grep '"nr5g_band"' | grep -v 'nsa_' | grep -v 'nrdc_' | head -1)
-[ -n "$line" ] && all_sa=$(printf '%s' "$line" | sed 's/.*"nr5g_band",//' | tr -d '\r ')
 
 qlog_info "FAILOVER: Resetting to policy_band — LTE=$all_lte NSA=$all_nsa SA=$all_sa"
 

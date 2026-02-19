@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -62,18 +62,24 @@ const BandCardsComponent = ({
   error,
 }: BandCardsProps) => {
   // --- Local checkbox state (number set for O(1) lookup) --------------------
-  const [checkedBands, setCheckedBands] = useState<Set<number>>(new Set());
+  const [checkedBands, setCheckedBands] = useState<Set<number>>(
+    () => new Set(currentLockedBands),
+  );
 
-  // Sync local state when currentLockedBands changes (initial load or after lock)
-  useEffect(() => {
-    if (currentLockedBands.length > 0) {
-      setCheckedBands(new Set(currentLockedBands));
-    }
-  }, [currentLockedBands]);
+  // Sync local state when currentLockedBands prop changes (initial load or after lock).
+  // "Store previous value in state" pattern per React docs — no refs, no effects.
+  // See: https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [prevLockedKey, setPrevLockedKey] = useState("");
+  const lockedKey = currentLockedBands.join(":");
+  if (prevLockedKey !== lockedKey && currentLockedBands.length > 0) {
+    setPrevLockedKey(lockedKey);
+    setCheckedBands(new Set(currentLockedBands));
+  }
 
   // --- Derived state --------------------------------------------------------
   const isAllUnlocked = useMemo(() => {
-    if (supportedBands.length === 0 || currentLockedBands.length === 0) return false;
+    if (supportedBands.length === 0 || currentLockedBands.length === 0)
+      return false;
     return (
       currentLockedBands.length === supportedBands.length &&
       currentLockedBands.every((b) => supportedBands.includes(b))
@@ -118,7 +124,9 @@ const BandCardsComponent = ({
 
     const success = await onLock(bands);
     if (success) {
-      toast.success(`${title.replace(" Locking", "")} bands locked successfully`);
+      toast.success(
+        `${title.replace(" Locking", "")} bands locked successfully`,
+      );
     } else {
       toast.error(error || "Failed to apply band lock");
     }
@@ -176,54 +184,13 @@ const BandCardsComponent = ({
   return (
     <Card className="@container/card">
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>{title}</CardTitle>
-            <CardDescription>{description}</CardDescription>
-          </div>
-          {isAllUnlocked ? (
-            <Badge
-              variant="outline"
-              className="bg-emerald-500/20 text-emerald-500 border-emerald-300/50"
-            >
-              <LockOpenIcon className="mr-1 h-3 w-3" />
-              All Unlocked
-            </Badge>
-          ) : (
-            <Badge
-              variant="outline"
-              className="bg-amber-500/20 text-amber-500 border-amber-300/50"
-            >
-              <LockIcon className="mr-1 h-3 w-3" />
-              {currentLockedBands.length} / {supportedBands.length} Bands
-            </Badge>
-          )}
-        </div>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
       </CardHeader>
 
       <CardContent>
-        {/* Quick actions row */}
-        <div className="flex items-center gap-2 mb-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSelectAll}
-            disabled={isLocking}
-          >
-            Select All
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSelectNone}
-            disabled={isLocking}
-          >
-            Clear
-          </Button>
-        </div>
-
         {/* Band checkbox grid */}
-        <div className="grid lg:grid-cols-8 md:grid-cols-6 sm:grid-cols-4 grid-cols-3 grid-flow-row gap-4">
+        <div className="grid lg:grid-cols-8 md:grid-cols-6 sm:grid-cols-4 grid-cols-3 grid-flow-row gap-4 mt-2">
           {supportedBands.map((band) => (
             <div className="flex items-center space-x-2" key={band}>
               <Checkbox
@@ -244,8 +211,8 @@ const BandCardsComponent = ({
         </div>
       </CardContent>
 
-      <CardFooter>
-        <div className="mt-3 flex items-center gap-x-2">
+      <CardFooter className="flex flex-row items-center justify-between mt-4">
+        <div className="flex items-center gap-x-2">
           <Button
             onClick={handleLock}
             disabled={isLocking || noneSelected || !hasChanges}
@@ -260,6 +227,23 @@ const BandCardsComponent = ({
             title="Unlock all bands (reset)"
           >
             <RotateCcwIcon />
+          </Button>
+        </div>
+        {/* Quick actions row */}
+        <div className="flex items-center gap-x-2">
+          <Button
+            variant="outline"
+            onClick={handleSelectAll}
+            disabled={isLocking}
+          >
+            Select All
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleSelectNone}
+            disabled={isLocking}
+          >
+            Clear
           </Button>
         </div>
       </CardFooter>
