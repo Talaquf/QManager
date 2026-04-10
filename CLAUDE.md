@@ -97,6 +97,12 @@ All status badges use `variant="outline"` with semantic color classes and `size-
 - **SIM mismatch UI**: `custom-profile-table.tsx` compares active profile's `sim_iccid` against `modemStatus.device.iccid`. Mismatch → warning badge ("SIM Mismatch" with `TriangleAlertIcon`) instead of blue "Active" badge.
 - **Profile events**: `profile_applied` (info/warning), `profile_failed` (error), `profile_deactivated` (info/warning) — emitted by `qmanager_profile_apply` and `deactivate.sh`, displayed in Network Events (dataConnection tab)
 - **TTL override**: `ttl-settings-card.tsx` disables form when active profile has TTL/HL > 0
+- **ICCID auto-apply (2026-04-10)**: `profile_mgr.sh::auto_apply_profile <iccid> <caller>` looks up a profile by current SIM ICCID and spawns `qmanager_profile_apply` detached. Triggered from 4 call sites, all using the subshell-sourcing pattern `( . /usr/lib/qmanager/profile_mgr.sh && auto_apply_profile "$iccid" "<tag>" )` to avoid polluting the caller's environment:
+  - `qmanager_poller::collect_boot_data()` — tag `boot`, reuses `$boot_iccid` captured earlier
+  - `cellular/settings.sh` after successful SIM slot change — tag `sim_switch`, 3×1s ICCID retry for slow SIM registration
+  - `qmanager_watchcat::finish_cooldown()` Tier 3 success — tag `watchdog`, reuses `$curr_iccid`
+  - `qmanager_watchcat::sim_failover_fallback()` after `wait_for_modem` — tag `watchdog_revert`, 3×1s ICCID retry
+- **Auto-apply safety**: `auto_apply_profile` guards on `profile_check_lock` (won't race a manual Activate click) and `profile_count > 0` (no log noise on fresh installs). The apply worker's per-step skip logic (APN/TTL/IMEI) is the single source of truth for "only apply what differs" — `auto_apply_profile` does NOT pre-compare settings, it just spawns the worker.
 
 ### Antenna Alignment
 
