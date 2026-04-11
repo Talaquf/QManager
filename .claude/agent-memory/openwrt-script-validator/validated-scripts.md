@@ -6,6 +6,19 @@ type: project
 
 ## Validated Scripts
 
+### 2026-04-11 — install.sh targeted validation (detect_modem_firmware cache fallback + die message)
+
+| Script | Status | LF | BusyBox/POSIX | Notes |
+| --- | --- | --- | --- | --- |
+| `scripts/install.sh` | PASS with one parsing warning | OK | PASS | New fallback path and updated preflight die message are ash-safe; cache extraction regex is greedy and can pick the last `"firmware"` key if schema ever includes duplicates |
+
+#### Details
+
+- Checked line endings with project checker logic by CR-stripping checker stream (checker file currently has CRLF in this workspace); target script result was `OK (LF)`.
+- `detect_modem_firmware()` additions are BusyBox-compatible: `for`, `sed`, `tr`, `grep -E`, `head`, and quoted tests only; no bashisms introduced.
+- `preflight()` die message now correctly reflects all attempted sources (ATI, AT+GMR, cache).
+- Parsing warning: line 289 regex `s/.*"firmware".../` is greedy and can return the last `"firmware"` occurrence if future cache schema adds another key with the same name.
+
 ### 2026-04-11 — install.sh targeted update validation (reboot_system + non-interactive optional packages)
 
 | Script | Status | LF | BusyBox/POSIX | Notes |
