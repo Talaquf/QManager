@@ -6,6 +6,18 @@ type: project
 
 ## Validated Scripts
 
+### 2026-04-11 — install.sh targeted update validation (reboot_system + non-interactive optional packages)
+
+| Script | Status | LF | BusyBox/POSIX | Notes |
+| --- | --- | --- | --- | --- |
+| `scripts/install.sh` | PASS with one process blocker | OK (fallback-verified) | PASS | `reboot_system()` fallback chain is ash-safe; optional package prompt now handles non-interactive stdin via `[ -t 0 ]` + default path |
+
+#### Details
+
+- `reboot_system()` uses portable `command -v` and explicit fallback to `/sbin/reboot` then `busybox reboot`; no bash-only syntax introduced.
+- Optional package prompt handling is BusyBox-compatible: `read -r` is gated behind `[ -t 0 ]`, non-interactive mode avoids blocking and defaults to install optional packages.
+- Process blocker: project checker `.claude/check-crlf.sh` currently fails to execute due CRLF in the checker itself; LF on `scripts/install.sh` was validated using direct CR-byte scan fallback.
+
 ### 2026-04-10 — Installer scripts re-validation (OpenWRT/BusyBox focus)
 
 | Script | Status | LF | BusyBox/POSIX | Notes |
