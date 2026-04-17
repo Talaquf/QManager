@@ -155,6 +155,20 @@ Use a simple changelog style for `RELEASE_NOTE.md` drafts.
 - **Pure-TS modules under test**: `lib/config-backup/{crypto,format,sections}.ts` have `*.test.ts` files run via `bun test`. This is the project's first Bun test setup — `tsconfig.json` excludes `**/*.test.ts` so `bun tsc --noEmit` doesn't choke on `bun:test` imports without DOM lib types
 - **TS 5.9 BufferSource quirk**: `crypto.ts` accepts bare `Uint8Array` in its public API (callers passing `subarray()`/`slice()` results would otherwise hit the tightened `Uint8Array<ArrayBufferLike>` constraint). Internal coercion via a private `toFixedBuffer()` helper produces the `Uint8Array<ArrayBuffer>` that `crypto.subtle.*` actually requires
 
+### Tower Lock Failover (explicit toggle, v0.1.18+)
+
+- **Route**: `/cellular/tower-locking`
+- **Contract**: Applying an LTE or NR-SA cell lock does NOT auto-enable Signal Failover. The user must explicitly flip the **Signal Failover** switch in `tower-settings.tsx`. Unlocking still auto-stops + auto-disables failover.
+- **Default**: `TOWER_DEFAULT_CONFIG.failover.enabled` is `false` in `tower_lock_mgr.sh`. Existing configs are preserved by `tower_config_init` on upgrade; fresh installs get `false`.
+- **Install gating**: `qmanager_tower_failover` is in `UCI_GATED_SERVICES` in `install.sh`, so init.d is only enabled on upgrade when a prior `/etc/rc.d/*qmanager_tower_failover*` symlink exists. Fresh install = daemon cannot auto-run.
+- **Unlock hardening**: `/etc/init.d/qmanager_tower_failover stop` sends SIGTERM, polls `is_daemon_pid_running` for up to 2 s via `sleep_fractional` (`usleep 100000` with `sleep 1` fallback), then `kill -9`. Always clears `$PID_FILE` + `$ACTIVATED_FLAG` with `return 0`. No more "stuck in Monitoring" after unlock.
+- **Self-heal**: `failover_status.sh` (GET, polled every 3 s) reads `.lte.enabled` / `.nr_sa.enabled`. If watcher is running but no lock is configured active, calls init.d `stop` inline (**NOT** `disable` — user's `.failover.enabled` intent is preserved) and clears flags before returning. Triggers on: manual config edit, botched unlock, orphan daemon.
+- **Spawn gating (unchanged)**: `tower_spawn_failover_watcher()` in `tower_lock_mgr.sh` is the single choke point — early-returns `"false"` when `.failover.enabled != "true"`. All callers (`lock.sh`, `settings.sh`, `qmanager_tower_schedule`) go through it.
+- **Frontend**: `use-tower-locking.ts::sendLockRequest` truthy branch does NOT force `config.failover.enabled = true` from `data.failover_armed`. Config only flows from `fetchStatus()` and `updateSettings()`.
+- **UX hint**: `tower-settings.tsx` renders a muted `<p className="text-xs text-muted-foreground pl-6">Failover is off — enable it to auto-unlock on poor signal.</p>` under the switch when `hasActiveLock && !(config?.failover?.enabled ?? false)`.
+- **Unchanged paths**: `settings.sh` disable-on-off path still runs init.d `disable` (correct — user intent). Unlock path still runs init.d `disable` when no locks remain.
+- **Band failover (`bands/lock.sh`) is out of scope** for this contract — it follows a separate feature's rules.
+
 ### Antenna Alignment
 
 - **Route**: `/cellular/antenna-alignment`
