@@ -147,13 +147,10 @@
     "heading": "الترددات المدمجة",
     "active_carriers_one": " تردد واحد نشط",
     "active_carriers_two": "ترددان نشطان",
-    "active_carriers_few": "{{count}} ترددات نشطة",
-    "active_carriers_many": "{{count}} نطاقاً نشطاً",
-    "active_carriers_other": "{{count}} نطاق نشط"
-  },
+   },
   "activities": {
     "title": "الأنشطة الأخيرة",
     "empty_title": "لا توجد أحداث",
-    "empty_description": "لم يتم رصد أي أحداث شبكية مؤخراً. يبدو أن جهازك مستقر ولا يشهد أي تغييرات جوهرية في ظروف الشبكة."
+    "empty_description": "لم يتم رصد أي أحداث شبكية مؤخراً. يبدو أن جهازك مستقر ولا يشهد أي تغييرات جوهرية في ظروف الشبكة"
   }
 }
